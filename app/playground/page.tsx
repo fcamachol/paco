@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { LayoutShell } from '@/components/layout-shell'
 
 const initialMessages = [
   { id: '1', role: 'user', content: 'Hola, quiero reportar una fuga' },
@@ -18,22 +19,6 @@ const debugState = {
   intent: 'fuga',
   category: 'FUG',
   fields: { direccion: 'Av. Universidad 123, col. Centro', referencia: null, telefono: null }
-}
-
-function Nav() {
-  return (
-    <nav className="nav">
-      <div className="flex items-center gap-4">
-        <span className="nav-brand"><span className="text-xl">◉</span> PACO</span>
-        <span className="nav-breadcrumb">/ playground</span>
-      </div>
-      <div className="flex items-center gap-3">
-        <button className="btn btn-ghost">reset</button>
-        <button className="btn btn-ghost">export</button>
-        <span className="kbd">⌘K</span>
-      </div>
-    </nav>
-  )
 }
 
 function ChatPanel() {
@@ -124,8 +109,7 @@ function DebugPanel() {
 
 export default function Playground() {
   return (
-    <div className="page">
-      <Nav />
+    <LayoutShell breadcrumb="/ playground">
       <div className="flex items-center gap-4 mb-4 font-mono text-sm">
         <div className="flex items-center gap-2">
           <span className="text-text-muted">agent:</span>
@@ -148,6 +132,6 @@ export default function Playground() {
         <ChatPanel />
         <DebugPanel />
       </div>
-    </div>
+    </LayoutShell>
   )
 }

@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import { LayoutShell } from '@/components/layout-shell'
 
 const agents = [
   { id: '1', name: 'María', description: 'CEA Querétaro customer service', status: 'active', conversations: 234, model: 'sonnet', accuracy: '94%' },
@@ -7,22 +8,9 @@ const agents = [
   { id: '3', name: 'Copilot', description: 'Admin database control', status: 'beta', conversations: 0, model: 'opus', accuracy: '--' },
 ]
 
-function Nav() {
-  return (
-    <nav className="nav">
-      <div className="flex items-center gap-4">
-        <span className="nav-brand"><span className="text-xl">◉</span> PACO</span>
-        <span className="nav-breadcrumb">/ agents</span>
-      </div>
-      <span className="kbd">⌘K</span>
-    </nav>
-  )
-}
-
 export default function AgentsPage() {
   return (
-    <div className="page">
-      <Nav />
+    <LayoutShell breadcrumb="/ agents">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-medium">Agents</h1>
         <button className="btn btn-primary">+ new agent</button>
@@ -60,6 +48,6 @@ export default function AgentsPage() {
           </Link>
         ))}
       </div>
-    </div>
+    </LayoutShell>
   )
 }

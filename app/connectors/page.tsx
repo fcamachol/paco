@@ -1,4 +1,5 @@
 'use client'
+import { LayoutShell } from '@/components/layout-shell'
 
 const connectors = [
   { id: '1', name: 'AGORA', type: 'REST API', status: 'connected', tools: 5, endpoint: 'agora.humansoftware.mx/api/v1' },
@@ -7,22 +8,9 @@ const connectors = [
   { id: '4', name: 'Chatwoot', type: 'Webhook', status: 'pending', tools: 0, endpoint: 'chatwoot.humansoftware.mx' },
 ]
 
-function Nav() {
-  return (
-    <nav className="nav">
-      <div className="flex items-center gap-4">
-        <span className="nav-brand"><span className="text-xl">◉</span> PACO</span>
-        <span className="nav-breadcrumb">/ connectors</span>
-      </div>
-      <span className="kbd">⌘K</span>
-    </nav>
-  )
-}
-
 export default function ConnectorsPage() {
   return (
-    <div className="page">
-      <Nav />
+    <LayoutShell breadcrumb="/ connectors">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-medium">Connectors</h1>
         <button className="btn btn-primary">+ add connector</button>
@@ -59,6 +47,6 @@ export default function ConnectorsPage() {
           ))}
         </div>
       </div>
-    </div>
+    </LayoutShell>
   )
 }

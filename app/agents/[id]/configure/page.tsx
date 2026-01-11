@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { LayoutShell } from '@/components/layout-shell'
 
 const toolGroups = [
   {
@@ -28,18 +29,6 @@ const toolGroups = [
   }
 ]
 
-function Nav() {
-  return (
-    <nav className="nav">
-      <div className="flex items-center gap-4">
-        <span className="nav-brand"><span className="text-xl">◉</span> PACO</span>
-        <span className="nav-breadcrumb">/ agents / maría / tools</span>
-      </div>
-      <span className="kbd">⌘K</span>
-    </nav>
-  )
-}
-
 export default function AgentConfig() {
   const [groups, setGroups] = useState(toolGroups)
   const [activeTab, setActiveTab] = useState('tools')
@@ -54,8 +43,7 @@ export default function AgentConfig() {
   const enabledCount = groups.reduce((a, g) => a + g.tools.filter(t => t.enabled).length, 0)
 
   return (
-    <div className="page">
-      <Nav />
+    <LayoutShell breadcrumb="/ agents / maría / configure">
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-xl font-medium">María</h1>
@@ -110,6 +98,6 @@ export default function AgentConfig() {
         <button className="btn btn-ghost">cancel</button>
         <button className="btn btn-primary">save draft</button>
       </div>
-    </div>
+    </LayoutShell>
   )
 }

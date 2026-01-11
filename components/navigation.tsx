@@ -6,6 +6,7 @@ const navItems = [
   { href: '/dashboard', label: 'dashboard', icon: '◉' },
   { href: '/agents', label: 'agents', icon: '◈' },
   { href: '/connectors', label: 'connectors', icon: '◇' },
+  { href: '/marketplace', label: 'marketplace', icon: '◆' },
   { href: '/playground', label: 'playground', icon: '▷' },
   { href: '/monitoring', label: 'monitoring', icon: '◐' },
 ]

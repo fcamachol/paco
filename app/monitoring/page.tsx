@@ -1,4 +1,5 @@
 'use client'
+import { LayoutShell } from '@/components/layout-shell'
 
 const escalations = [
   { time: '10:23', reason: 'user requested', category: 'pagos', resolution: 'resolved by agent' },
@@ -31,25 +32,6 @@ const volumeData = [
   { day: '9', value: 290 },
   { day: '10', value: 227 },
 ]
-
-function Nav() {
-  return (
-    <nav className="nav">
-      <div className="flex items-center gap-4">
-        <span className="nav-brand"><span className="text-xl">◉</span> PACO</span>
-        <span className="nav-breadcrumb">/ monitoring</span>
-      </div>
-      <div className="flex items-center gap-3">
-        <select className="input w-32 py-1 text-sm">
-          <option>last 7 days</option>
-          <option>last 30 days</option>
-          <option>this month</option>
-        </select>
-        <span className="kbd">⌘K</span>
-      </div>
-    </nav>
-  )
-}
 
 function TopStats() {
   const stats = [
@@ -147,8 +129,7 @@ function EscalationsTable() {
 
 export default function Monitoring() {
   return (
-    <div className="page">
-      <Nav />
+    <LayoutShell breadcrumb="/ monitoring">
       <TopStats />
       <VolumeChart />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
@@ -156,6 +137,6 @@ export default function Monitoring() {
         <BarChart data={funnel} title="resolution funnel" />
       </div>
       <EscalationsTable />
-    </div>
+    </LayoutShell>
   )
 }

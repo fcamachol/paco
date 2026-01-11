@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { LayoutShell } from '@/components/layout-shell'
 
 const agents = [
   { id: '1', name: 'María', description: 'CEA Customer', status: 'active', conversations: 234 },
@@ -15,21 +15,6 @@ const stats = [
   { label: 'avg response', value: '1.8s' },
   { label: 'peak hour', value: '16:00' },
 ]
-
-function Nav() {
-  return (
-    <nav className="nav">
-      <div className="flex items-center gap-4">
-        <span className="nav-brand"><span className="text-xl">◉</span> PACO</span>
-        <span className="nav-breadcrumb">/ dashboard</span>
-      </div>
-      <div className="flex items-center gap-4">
-        <span className="text-text-secondary text-sm">fernando@cea</span>
-        <span className="kbd">⌘K</span>
-      </div>
-    </nav>
-  )
-}
 
 function AgentCard({ agent }: { agent: typeof agents[0] }) {
   return (
@@ -81,8 +66,7 @@ function Heatmap() {
 
 export default function Dashboard() {
   return (
-    <div className="page">
-      <Nav />
+    <LayoutShell breadcrumb="/ dashboard">
       <section className="section">
         <div className="section-title">agents</div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -108,6 +92,6 @@ export default function Dashboard() {
         <p className="text-accent mb-1">PACO resolved ~142 tickets while you were sleeping</p>
         <p>Stats from the last 61 days</p>
       </footer>
-    </div>
+    </LayoutShell>
   )
 }

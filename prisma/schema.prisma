@@ -1,0 +1,247 @@
+// Prisma schema for PACO - Pretty Advanced Cognitive Orchestrator
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ AGENTS ============
+
+model Agent {
+  id           String   @id @default(cuid())
+  accountId    String?  // NULL = system agent
+  name         String
+  description  String
+  status       String   @default("active") // active, inactive, beta, error
+  model        String   @default("claude-sonnet-4-20250514")
+  systemPrompt String   @default("")
+  temperature  Float    @default(0.7)
+  maxTurns     Int      @default(10)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  agentTools    AgentTool[]
+  agentSkills   AgentSkill[]
+  conversations Conversation[]
+  escalations   Escalation[]
+  config        AgentConfig?
+
+  @@index([accountId])
+  @@map("agents")
+}
+
+model AgentConfig {
+  id              String   @id @default(cuid())
+  agentId         String   @unique
+  escalationRules String   @default("[]") // JSON array of escalation rules
+  workflowId      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("agent_configs")
+}
+
+// ============ TOOLS & CONNECTORS ============
+
+model Connector {
+  id        String   @id @default(cuid())
+  accountId String?  // NULL = system connector
+  name      String
+  type      String   // rest, soap, database, webhook
+  status    String   @default("pending") // connected, disconnected, pending, error
+  endpoint  String
+  config    String   @default("{}") // JSON config
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tools Tool[]
+
+  @@index([accountId])
+  @@map("connectors")
+}
+
+model Tool {
+  id          String   @id @default(cuid())
+  accountId   String?  // NULL = system/public tool
+  name        String
+  slug        String   @unique
+  description String
+  inputSchema String   @default("{}") // JSON schema
+  connectorId String?  // NULL = standalone tool (not connector-dependent)
+  handler     String?  // For standalone tools: module path or inline code reference
+  enabled     Boolean  @default(true)
+  isPublic    Boolean  @default(false)
+  isVerified  Boolean  @default(false) // PACO-verified for marketplace
+  usageCount  Int      @default(0)
+  category    String   @default("general") // utility, integration, data, communication
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  connector  Connector?  @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  agentTools AgentTool[]
+  toolCalls  ToolCall[]
+
+  @@index([accountId])
+  @@index([category])
+  @@index([isPublic, isVerified])
+  @@map("tools")
+}
+
+model AgentTool {
+  id       String  @id @default(cuid())
+  agentId  String
+  toolId   String
+  enabled  Boolean @default(true)
+  priority Int     @default(0)
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tool  Tool  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, toolId])
+  @@map("agent_tools")
+}
+
+// ============ SKILLS ============
+
+model Skill {
+  id          String   @id @default(cuid())
+  accountId   String?  // NULL = public/system skill
+  name        String
+  slug        String   @unique
+  description String
+  type        String   // prompt, behavior, composite
+  category    String   // tone, language, safety, domain, government
+  definition  String   // JSON: prompt template, code reference, or composition
+  version     String   @default("1.0.0")
+  isPublic    Boolean  @default(true)
+  isVerified  Boolean  @default(false) // PACO-verified
+  usageCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  agentSkills AgentSkill[]
+
+  @@index([accountId])
+  @@index([category])
+  @@index([isPublic, isVerified])
+  @@map("skills")
+}
+
+model AgentSkill {
+  id       String  @id @default(cuid())
+  agentId  String
+  skillId  String
+  enabled  Boolean @default(true)
+  priority Int     @default(0)
+  config   String  @default("{}") // JSON: skill-specific overrides
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, skillId])
+  @@map("agent_skills")
+}
+
+// ============ CONVERSATIONS ============
+
+model Conversation {
+  id          String    @id @default(cuid())
+  agentId     String
+  status      String    @default("active") // active, resolved, escalated, abandoned
+  metadata    String    @default("{}") // JSON metadata
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  resolvedAt  DateTime?
+  escalatedAt DateTime?
+
+  agent       Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  messages    Message[]
+  toolCalls   ToolCall[]
+  escalations Escalation[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String   // user, assistant, system
+  content        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  toolCalls    ToolCall[]
+
+  @@map("messages")
+}
+
+model ToolCall {
+  id             String   @id @default(cuid())
+  conversationId String
+  messageId      String
+  toolId         String?
+  toolName       String
+  toolInput      String   @default("{}") // JSON
+  toolOutput     String?  // JSON
+  status         String   @default("pending") // pending, running, complete, error
+  durationMs     Int?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  tool         Tool?        @relation(fields: [toolId], references: [id])
+
+  @@map("tool_calls")
+}
+
+// ============ ESCALATIONS ============
+
+model Escalation {
+  id             String    @id @default(cuid())
+  conversationId String
+  agentId        String
+  reason         String    // user_request, negative_sentiment, retry_limit, keyword_trigger, timeout, error
+  category       String    @default("general")
+  resolution     String    @default("pending") // pending, resolved_by_agent, resolved_by_human, transferred, abandoned
+  resolvedAt     DateTime?
+  resolvedBy     String?
+  createdAt      DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent        Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("escalations")
+}
+
+// ============ METRICS ============
+
+model DailyMetrics {
+  id            String   @id @default(cuid())
+  date          DateTime @unique
+  conversations Int      @default(0)
+  resolved      Int      @default(0)
+  escalated     Int      @default(0)
+  totalTokens   Int      @default(0)
+  avgResponseMs Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@map("daily_metrics")
+}
+
+model HourlyActivity {
+  id        String   @id @default(cuid())
+  timestamp DateTime
+  agentId   String?
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([timestamp])
+  @@map("hourly_activity")
+}
