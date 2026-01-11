@@ -20,7 +20,7 @@ export const SimulationResultSchema = z.object({
     content: z.string(),
     toolCalls: z.array(z.object({
       name: z.string(),
-      params: z.record(z.any()),
+      params: z.record(z.string(), z.any()),
       result: z.any(),
       status: z.enum(['success', 'error']),
     })).optional(),

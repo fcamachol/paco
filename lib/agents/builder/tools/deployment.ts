@@ -20,8 +20,8 @@ export const DeploymentSchema = z.object({
   url: z.string().optional(),
   config: z.object({
     maxConcurrentUsers: z.number().optional(),
-    rateLimits: z.record(z.number()).optional(),
-    features: z.record(z.boolean()).optional(),
+    rateLimits: z.record(z.string(), z.number()).optional(),
+    features: z.record(z.string(), z.boolean()).optional(),
   }).optional(),
   deployedAt: z.string(),
   deployedBy: z.string(),
@@ -33,7 +33,7 @@ export const AgentVersionSchema = z.object({
   version: z.string(),
   name: z.string(),
   notes: z.string().optional(),
-  snapshot: z.record(z.any()), // Full agent config at this version
+  snapshot: z.record(z.string(), z.any()), // Full agent config at this version
   createdAt: z.string(),
   createdBy: z.string(),
 })
@@ -41,7 +41,7 @@ export const AgentVersionSchema = z.object({
 export const ChannelConfigSchema = z.object({
   channel: z.enum(['web', 'whatsapp', 'telegram', 'api', 'chatwoot']),
   enabled: z.boolean(),
-  config: z.record(z.any()),
+  config: z.record(z.string(), z.any()),
 })
 
 // ============================================

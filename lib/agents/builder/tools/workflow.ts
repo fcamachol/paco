@@ -21,7 +21,7 @@ export const WorkflowStepSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('call_tool'),
     tool: z.string(),
-    params: z.record(z.any()),
+    params: z.record(z.string(), z.any()),
     store_result: z.string().optional(), // variable name to store result
   }),
   z.object({

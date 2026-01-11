@@ -26,8 +26,8 @@ export const DiscoveredToolSchema = z.object({
   slug: z.string(),
   description: z.string(),
   connectorId: z.string(),
-  inputSchema: z.record(z.any()),
-  outputSchema: z.record(z.any()).optional(),
+  inputSchema: z.record(z.string(), z.any()),
+  outputSchema: z.record(z.string(), z.any()).optional(),
 })
 
 export const SkillSchema = z.object({
