@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     tool_sync_interval: int = 300
     infra_health_interval: int = 30
 
+    # Agent Lightning (RL Optimization)
+    lightning_enabled: bool = False
+    lightning_store_path: str = "./lightning_store"
+    lightning_default_algorithm: str = "apo"
+
     # Infrastructure Code Generation
     generated_projects_path: str = "./generated_projects"
 
