@@ -1107,6 +1107,27 @@ class CompanyMessage(Base):
     department: Mapped[Optional["CompanyDepartment"]] = relationship()
 
 
+class GlobalSetting(Base):
+    """Global key-value settings, used for API keys and other config persisted via UI."""
+
+    __tablename__ = "global_settings"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Process(Base):
     """Process analysis record from the Process Builder pipeline."""
 

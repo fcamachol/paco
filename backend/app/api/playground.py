@@ -33,6 +33,7 @@ class AgentRunRequest(BaseModel):
     agent_config: Dict[str, Any]  # Agent node config from canvas
     conversation_history: List[Dict[str, str]] = []  # For multi-turn
     tools_config: List[Dict[str, Any]] = []  # Tool/MCP configs from connected nodes
+    agent_id: Optional[str] = None  # DB agent ID to look up per-agent env_vars
 
 
 class InfraRunRequest(BaseModel):
@@ -72,6 +73,56 @@ def _get_api_key() -> str:
     """Get Anthropic API key from settings (loaded from .env by pydantic-settings)."""
     from app.core.config import settings
     return settings.anthropic_api_key
+
+
+async def _get_global_setting(key: str) -> str:
+    """Fetch a global setting from the database (primary source for API keys)."""
+    try:
+        from app.db.session import async_session_maker
+        from app.db.models import GlobalSetting
+        from sqlalchemy import select
+
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(GlobalSetting).where(GlobalSetting.key == key)
+            )
+            setting = result.scalar_one_or_none()
+            return setting.value if setting else ""
+    except Exception:
+        return ""
+
+
+async def _get_agent_api_key(agent_id: Optional[str]) -> str:
+    """Look up per-agent ANTHROPIC_API_KEY from the agent's env_vars in the DB."""
+    if not agent_id:
+        return ""
+    try:
+        from app.db.session import async_session_maker
+        from app.db.models import Agent
+        from sqlalchemy import select
+
+        async with async_session_maker() as db:
+            result = await db.execute(select(Agent).where(Agent.id == agent_id))
+            agent = result.scalar_one_or_none()
+            if agent and agent.env_vars:
+                return agent.env_vars.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        pass
+    return ""
+
+
+async def _resolve_api_key(agent_id: Optional[str] = None) -> str:
+    """Resolve API key: per-agent env_vars > DB global_settings > env var fallback."""
+    # 1. Per-agent key
+    key = await _get_agent_api_key(agent_id)
+    if key:
+        return key
+    # 2. DB global setting (primary)
+    key = await _get_global_setting("ANTHROPIC_API_KEY")
+    if key:
+        return key
+    # 3. Env var fallback (legacy)
+    return os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
 
 
 # =============================================================================
@@ -214,13 +265,13 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                     "input_schema": tool_schema if tool_schema else {"type": "object", "properties": {}},
                 })
 
-        # Call Claude API via Anthropic
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
+        # Resolve API key: per-agent > DB global > env var fallback
+        api_key = await _resolve_api_key(request.agent_id)
         if not api_key:
             yield format_sse(make_step(
                 "error",
                 agent_id=agent_name,
-                data={"error": "ANTHROPIC_API_KEY not configured. Set it in backend .env to enable playground."},
+                data={"error": "ANTHROPIC_API_KEY not configured. Set it in Settings, the agent's env vars, or in backend .env to enable playground."},
             ))
             return
 
@@ -614,11 +665,11 @@ async def hive_infra_event_generator(
             ))
             return
 
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
+        api_key = await _resolve_api_key()
         if not api_key:
             yield format_sse(make_step(
                 "error",
-                data={"error": "ANTHROPIC_API_KEY not configured. Set it in backend .env to enable playground."},
+                data={"error": "ANTHROPIC_API_KEY not configured. Set it in Settings or in the agent's env vars to enable playground."},
             ))
             return
 
@@ -1063,12 +1114,12 @@ async def infra_event_generator(request: InfraRunRequest) -> AsyncGenerator[str,
             ))
             return
 
-        # Check API key
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
+        # Resolve API key: DB global > env var fallback
+        api_key = await _resolve_api_key()
         if not api_key:
             yield format_sse(make_step(
                 "error",
-                data={"error": "ANTHROPIC_API_KEY not configured. Set it in backend .env to enable playground."},
+                data={"error": "ANTHROPIC_API_KEY not configured. Set it in Settings or in the agent's env vars to enable playground."},
             ))
             return
 
