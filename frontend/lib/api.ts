@@ -1173,6 +1173,69 @@ class ApiClient {
     return this.request<BuilderArtifacts>(`/api/builder/sessions/${sessionId}/artifacts`);
   }
 
+  // ==========================================================================
+  // Agent Lightning endpoints
+  // ==========================================================================
+
+  async getLightningDatasets(agentId?: string) {
+    const params = agentId ? `?agent_id=${agentId}` : "";
+    return this.request<LightningDataset[]>(`/api/lightning/datasets${params}`);
+  }
+
+  async createLightningDataset(data: {
+    name: string;
+    description?: string;
+    agent_id: string;
+    items: Array<{ prompt: string; expected_output?: string; metadata?: Record<string, any> }>;
+  }) {
+    return this.request<LightningDataset>("/api/lightning/datasets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteLightningDataset(id: string) {
+    return this.request<void>(`/api/lightning/datasets/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  async getTrainingRuns(agentId?: string) {
+    const params = agentId ? `?agent_id=${agentId}` : "";
+    return this.request<TrainingRun[]>(`/api/lightning/training-runs${params}`);
+  }
+
+  async createTrainingRun(data: {
+    agent_id: string;
+    dataset_id: string;
+    algorithm?: string;
+    reward_function?: string;
+    reward_config?: Record<string, any>;
+    max_epochs?: number;
+    config?: Record<string, any>;
+  }) {
+    return this.request<TrainingRun>("/api/lightning/training-runs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getTrainingRun(id: string) {
+    return this.request<TrainingRun>(`/api/lightning/training-runs/${id}`);
+  }
+
+  async updateAgentLightningConfig(agentId: string, config: {
+    enabled?: boolean;
+    reward_function?: string;
+    reward_config?: Record<string, any>;
+    training_schedule?: string;
+  }) {
+    return this.request<{ status: string; lightning_config: Record<string, any> }>(
+      `/api/lightning/agents/${agentId}/config`,
+      { method: "PATCH", body: JSON.stringify(config) }
+    );
+  }
+
 }
 
 // Builder types
@@ -1638,6 +1701,33 @@ export interface UpdateWorkflowRequest {
   name?: string;
   description?: string;
   config?: Record<string, any>;
+}
+
+// Lightning types
+export interface LightningDataset {
+  id: string;
+  name: string;
+  description?: string;
+  agent_id: string;
+  item_count: number;
+  created_at: string;
+}
+
+export interface TrainingRun {
+  id: string;
+  agent_id: string;
+  dataset_id: string;
+  algorithm: string;
+  status: "pending" | "running" | "completed" | "failed" | "canceled";
+  reward_function: string;
+  current_epoch: number;
+  max_epochs: number;
+  best_reward?: number;
+  metrics: Record<string, any>;
+  optimized_prompt?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
 }
 
 // Export singleton instance
