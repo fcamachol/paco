@@ -15,7 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.deps import DbSession
+from app.core.deps import DbSession, OperatorUser
 from app.db.models import Agent, LightningDataset, LightningTrainingRun
 from app.schemas.lightning import (
     DatasetCreate,
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/lightning", tags=["Agent Lightning"])
 # -- Datasets --
 
 @router.post("/datasets", response_model=DatasetResponse, status_code=201)
-async def create_dataset(req: DatasetCreate, db: DbSession):
+async def create_dataset(req: DatasetCreate, db: DbSession, _user: OperatorUser):
     """Create a training dataset for an agent."""
     ds = LightningDataset(
         name=req.name,
@@ -69,7 +69,7 @@ async def list_datasets(db: DbSession, agent_id: Optional[str] = None):
 
 
 @router.delete("/datasets/{dataset_id}", status_code=204)
-async def delete_dataset(dataset_id: str, db: DbSession):
+async def delete_dataset(dataset_id: str, db: DbSession, _user: OperatorUser):
     """Delete a training dataset."""
     result = await db.execute(
         select(LightningDataset).where(LightningDataset.id == PyUUID(dataset_id))
@@ -161,6 +161,7 @@ async def create_training_run(
     req: TrainingRunCreate,
     db: DbSession,
     background_tasks: BackgroundTasks,
+    _user: OperatorUser,
 ):
     """Launch a new training run."""
     run = LightningTrainingRun(
@@ -246,6 +247,7 @@ async def update_agent_lightning_config(
     agent_id: str,
     req: LightningConfigUpdate,
     db: DbSession,
+    _user: OperatorUser,
 ):
     """Update an agent's lightning_config."""
     result = await db.execute(select(Agent).where(Agent.id == PyUUID(agent_id)))
