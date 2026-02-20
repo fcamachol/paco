@@ -1169,12 +1169,29 @@ export interface BuilderProcessStep {
   action?: string;
 }
 
+export interface BuilderKnowledgeBaseFaq {
+  question: string;
+  answer: string;
+}
+
+export interface BuilderKnowledgeBaseCost {
+  concept: string;
+  amount: string;
+}
+
+export interface BuilderKnowledgeBase {
+  faqs?: BuilderKnowledgeBaseFaq[];
+  requirements?: string[];
+  costs?: BuilderKnowledgeBaseCost[];
+  links?: string[];
+}
+
 export interface BuilderArtifacts {
   agent?: BuilderArtifactAgent;
   tools: BuilderArtifactTool[];
   skills: BuilderArtifactSkill[];
   process_flow?: BuilderProcessStep[];
-  knowledge_base?: any;
+  knowledge_base?: BuilderKnowledgeBase;
 }
 
 export interface BuilderSession {
