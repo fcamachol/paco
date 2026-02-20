@@ -30,9 +30,10 @@ async def _ensure_schema_columns():
     """Run Alembic migrations to ensure DB schema is up to date."""
     import subprocess, os
     alembic_dir = os.path.join(os.path.dirname(__file__), "..")
+    env = {**os.environ, "PYTHONPATH": alembic_dir}
     result = subprocess.run(
         ["alembic", "upgrade", "head"],
-        cwd=alembic_dir,
+        cwd=alembic_dir, env=env,
         capture_output=True, text=True, timeout=30,
     )
     if result.returncode == 0:
