@@ -1,0 +1,84 @@
+/* Playground node animations */
+
+@keyframes node-pulse-green {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
+  50% { box-shadow: 0 0 20px 4px rgba(0, 255, 136, 0.6); }
+}
+
+@keyframes node-pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 170, 0, 0.4); }
+  50% { box-shadow: 0 0 20px 4px rgba(255, 170, 0, 0.6); }
+}
+
+@keyframes node-flash {
+  0% { box-shadow: 0 0 20px 4px rgba(0, 255, 136, 0.8); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+}
+
+@keyframes node-pulse-purple {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+  50% { box-shadow: 0 0 20px 4px rgba(139, 92, 246, 0.6); }
+}
+
+@keyframes node-pulse-cyan {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.4); }
+  50% { box-shadow: 0 0 20px 4px rgba(34, 211, 238, 0.6); }
+}
+
+/* Node highlight states */
+.node-active {
+  animation: node-pulse-green 1.5s ease-in-out infinite;
+  border: 2px solid rgba(0, 255, 136, 0.6) !important;
+}
+
+.node-tool-running {
+  animation: node-pulse-amber 0.8s ease-in-out infinite;
+  border: 2px solid rgba(255, 170, 0, 0.6) !important;
+}
+
+.node-completed {
+  animation: node-flash 0.5s ease-out forwards;
+  border: 2px solid rgba(0, 255, 136, 0.4) !important;
+}
+
+.node-error {
+  box-shadow: 0 0 12px 2px rgba(255, 68, 68, 0.6);
+  border: 2px solid rgba(255, 68, 68, 0.6) !important;
+}
+
+.node-classifying {
+  animation: node-pulse-purple 1s ease-in-out infinite;
+  border: 2px solid rgba(139, 92, 246, 0.6) !important;
+}
+
+.node-decomposing {
+  animation: node-pulse-cyan 1s ease-in-out infinite;
+  border: 2px solid rgba(34, 211, 238, 0.6) !important;
+}
+
+/* Animated edge flow */
+@keyframes edge-flow {
+  0% { stroke-dashoffset: 24; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.react-flow__edge-path.animated-flow {
+  stroke-dasharray: 8 8;
+  animation: edge-flow 0.6s linear infinite;
+  stroke-width: 3;
+  stroke: #00ff88;
+}
+
+.react-flow__edge-path.animated-flow-amber {
+  stroke-dasharray: 8 8;
+  animation: edge-flow 0.6s linear infinite;
+  stroke-width: 3;
+  stroke: #f59e0b;
+}
+
+/* Edge highlight */
+.edge-active .react-flow__edge-path {
+  stroke: #00ff88 !important;
+  stroke-width: 3 !important;
+  filter: drop-shadow(0 0 4px rgba(0, 255, 136, 0.5));
+}

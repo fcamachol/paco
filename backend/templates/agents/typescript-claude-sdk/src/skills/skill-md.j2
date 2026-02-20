@@ -1,0 +1,19 @@
+---
+name: {{ current_skill.code }}
+description: {{ current_skill.description }}
+{% if current_skill.license %}
+license: {{ current_skill.license }}
+{% endif %}
+{% if current_skill.compatibility %}
+compatibility: {{ current_skill.compatibility }}
+{% endif %}
+metadata:
+  keywords: {{ current_skill.keywords | tojson }}
+  priority: {{ current_skill.priority }}
+  subcategories: {{ current_skill.subcategories | tojson }}
+{% if current_skill.allowed_tools %}
+allowed-tools: "{{ current_skill.allowed_tools | join(' ') }}"
+{% endif %}
+---
+
+{{ current_skill.prompt }}

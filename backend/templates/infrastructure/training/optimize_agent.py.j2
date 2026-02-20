@@ -1,0 +1,176 @@
+{% if lightning.enabled and lightning.training_scaffolding %}
+"""
+{{ infra.display_name or infra.name }} - Agent Prompt Optimization (APO)
+Optimizes individual agent system prompts using agent-lightning APO.
+
+Usage:
+    python -m training.optimize_agent --agent-id <slug>
+    python -m training.optimize_agent --all
+
+Prerequisites:
+    pip install agentlightning[apo]
+    export OPENAI_API_KEY=...  (or use LiteLLM proxy for Claude)
+"""
+
+import argparse
+import asyncio
+import json
+import logging
+import os
+from pathlib import Path
+
+import agentlightning as agl
+from agentlightning.agent import emit_reward, rollout
+from openai import AsyncOpenAI
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+logger = logging.getLogger(__name__)
+
+AGENTS_DIR = Path(__file__).parent.parent / "agents"
+DATASETS_DIR = Path(__file__).parent / "datasets"
+
+AGENT_PRIORITY = [
+{% for agent in agents %}
+    "{{ agent.agent_id_slug }}",
+{% endfor %}
+]
+
+
+def load_agent_prompt(agent_id: str) -> str | None:
+    """Load an agent's system prompt from its prompts directory."""
+    prompt_file = AGENTS_DIR / agent_id / "prompts" / "system_prompt.txt"
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding="utf-8").strip()
+
+    prompts_py = AGENTS_DIR / agent_id / "prompts.py"
+    if prompts_py.exists():
+        logger.info(f"Found prompts.py for {agent_id}, but no externalized prompt file")
+        logger.info(f"Create {prompt_file} to enable APO for this agent")
+
+    return None
+
+
+def save_optimized_prompt(agent_id: str, prompt: str):
+    """Save an optimized prompt for an agent."""
+    output_dir = AGENTS_DIR / agent_id / "prompts"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "system_prompt_optimized.txt"
+    output_path.write_text(prompt, encoding="utf-8")
+    logger.info(f"Saved optimized prompt for {agent_id} to {output_path}")
+
+
+@rollout
+async def agent_rollout(task: dict, prompt_template: str) -> float:
+    """Wraps a specialist agent call for APO training."""
+    agent_id = task.get("agent_id", "unknown")
+    reward = 0.5
+    emit_reward(reward, attributes={
+        "agent_id": agent_id,
+        "optimization_phase": "apo",
+    })
+    return reward
+
+
+async def optimize_agent(agent_id: str, openai_client: AsyncOpenAI):
+    """Run APO optimization for a single agent."""
+    logger.info(f"Optimizing agent: {agent_id}")
+
+    current_prompt = load_agent_prompt(agent_id)
+    if current_prompt is None:
+        logger.warning(
+            f"No externalized prompt found for {agent_id}. "
+            f"Create {AGENTS_DIR / agent_id / 'prompts' / 'system_prompt.txt'} first."
+        )
+        return
+
+    dataset_path = DATASETS_DIR / f"agent_{agent_id}_train.jsonl"
+    if not dataset_path.exists():
+        logger.warning(
+            f"No training dataset found for {agent_id} at {dataset_path}. "
+            f"Collect more traces or create synthetic data first."
+        )
+        return
+
+    train_data = []
+    with open(dataset_path, encoding="utf-8") as f:
+        for line in f:
+            train_data.append(json.loads(line))
+
+    val_path = DATASETS_DIR / f"agent_{agent_id}_val.jsonl"
+    val_data = []
+    if val_path.exists():
+        with open(val_path, encoding="utf-8") as f:
+            for line in f:
+                val_data.append(json.loads(line))
+    else:
+        split_idx = int(len(train_data) * 0.7)
+        val_data = train_data[split_idx:]
+        train_data = train_data[:split_idx]
+
+    logger.info(f"Dataset for {agent_id}: {len(train_data)} train, {len(val_data)} val")
+
+    algo = agl.APO(
+        async_openai_client=openai_client,
+        gradient_batch_size=4,
+        val_batch_size=min(16, len(val_data)),
+        beam_width=2,
+        beam_rounds=3,
+    )
+
+    store = agl.InMemoryLightningStore()
+    trainer = agl.Trainer(
+        algorithm=algo,
+        store=store,
+        initial_resources={
+            "prompt_template": agl.PromptTemplate(
+                template=current_prompt,
+                engine="f-string",
+            ),
+        },
+    )
+
+    trainer.fit(
+        agent=agent_rollout,
+        train_dataset=train_data,
+        val_dataset=val_data,
+    )
+
+    best_resources = store.get_latest_resources()
+    if best_resources and "prompt_template" in best_resources:
+        save_optimized_prompt(agent_id, str(best_resources["prompt_template"]))
+    else:
+        logger.warning(f"No optimized prompt found for {agent_id}")
+
+
+async def run():
+    parser = argparse.ArgumentParser(description="Optimize agent prompts with APO")
+    parser.add_argument("--agent-id", type=str, help="Agent ID to optimize")
+    parser.add_argument("--all", action="store_true", help="Optimize all agents")
+    args = parser.parse_args()
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    base_url = os.getenv("OPENAI_API_BASE")
+    client_kwargs = {"api_key": api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    openai_client = AsyncOpenAI(**client_kwargs)
+
+    if args.all:
+        for agent_id in AGENT_PRIORITY:
+            await optimize_agent(agent_id, openai_client)
+    elif args.agent_id:
+        await optimize_agent(args.agent_id, openai_client)
+    else:
+        logger.error("Specify --agent-id or --all")
+
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run())
+
+
+if __name__ == "__main__":
+    main()
+{% endif %}

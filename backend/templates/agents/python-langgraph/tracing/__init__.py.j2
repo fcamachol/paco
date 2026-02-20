@@ -1,0 +1,6 @@
+{% if lightning.enabled %}
+"""Agent Lightning Tracing Module"""
+from .setup import init_tracing, get_store, get_tracer, shutdown_tracing
+{% else %}
+# Agent Lightning tracing is disabled
+{% endif %}

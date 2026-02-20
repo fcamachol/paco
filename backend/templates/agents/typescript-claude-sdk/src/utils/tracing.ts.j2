@@ -1,0 +1,152 @@
+{% if lightning.enabled %}
+/**
+ * {{ agent.name }} - Agent Lightning Tracing Shim
+ * Lightweight TypeScript tracing for standalone Claude SDK agents.
+ *
+ * Stores events in a ring buffer and optionally forwards to
+ * Lightning Store Server via HTTP when LIGHTNING_STORE_URL env var is set.
+ */
+
+interface TracingEvent {
+  type: 'message' | 'annotation' | 'reward';
+  timestamp: number;
+  data: Record<string, unknown>;
+}
+
+interface OperationContext {
+  name: string;
+  startTime: number;
+  attributes: Record<string, string>;
+}
+
+const MAX_BUFFER_SIZE = 1000;
+const eventBuffer: TracingEvent[] = [];
+let storeUrl: string | undefined;
+
+function init(): void {
+  storeUrl = process.env.LIGHTNING_STORE_URL;
+  if (storeUrl) {
+    console.log(`[tracing] Lightning Store URL: ${storeUrl}`);
+  }
+}
+
+function addEvent(event: TracingEvent): void {
+  eventBuffer.push(event);
+  if (eventBuffer.length > MAX_BUFFER_SIZE) {
+    eventBuffer.shift();
+  }
+
+  if (storeUrl) {
+    forwardToStore(event).catch((err) => {
+      console.warn('[tracing] Failed to forward event:', err.message);
+    });
+  }
+}
+
+async function forwardToStore(event: TracingEvent): Promise<void> {
+  if (!storeUrl) return;
+
+  await fetch(`${storeUrl}/v1/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(event),
+  });
+}
+
+export function emitMessage(
+  role: 'user' | 'assistant',
+  content: string,
+  attributes?: Record<string, string>,
+): void {
+  addEvent({
+    type: 'message',
+    timestamp: Date.now(),
+    data: { role, content, ...attributes },
+  });
+}
+
+export function emitAnnotation(
+  key: string,
+  value: string,
+  attributes?: Record<string, string>,
+): void {
+  addEvent({
+    type: 'annotation',
+    timestamp: Date.now(),
+    data: { key, value, ...attributes },
+  });
+}
+
+export function emitReward(
+  score: number,
+  attributes?: Record<string, string>,
+): void {
+  addEvent({
+    type: 'reward',
+    timestamp: Date.now(),
+    data: { score, ...attributes },
+  });
+}
+
+export function operation<T>(
+  name: string,
+  fn: () => T | Promise<T>,
+  attributes?: Record<string, string>,
+): T | Promise<T> {
+  const startTime = Date.now();
+
+  const onComplete = (result: T): T => {
+    const duration = Date.now() - startTime;
+    addEvent({
+      type: 'annotation',
+      timestamp: Date.now(),
+      data: { operation: name, duration_ms: duration, ...attributes },
+    });
+    return result;
+  };
+
+  const onError = (err: unknown): never => {
+    const duration = Date.now() - startTime;
+    addEvent({
+      type: 'annotation',
+      timestamp: Date.now(),
+      data: {
+        operation: name,
+        duration_ms: duration,
+        error: err instanceof Error ? err.message : String(err),
+        ...attributes,
+      },
+    });
+    throw err;
+  };
+
+  try {
+    const result = fn();
+    if (result instanceof Promise) {
+      return result.then(onComplete).catch(onError);
+    }
+    return onComplete(result);
+  } catch (err) {
+    return onError(err);
+  }
+}
+
+export function getEventBuffer(): ReadonlyArray<TracingEvent> {
+  return eventBuffer;
+}
+
+// Auto-initialize on import
+init();
+{% else %}
+// Agent Lightning tracing is disabled for this project
+
+export function emitMessage(..._args: unknown[]): void {}
+export function emitAnnotation(..._args: unknown[]): void {}
+export function emitReward(..._args: unknown[]): void {}
+export function operation<T>(_name: string, fn: () => T | Promise<T>): T | Promise<T> {
+  return fn();
+}
+export function getEventBuffer(): ReadonlyArray<never> {
+  return [];
+}
+{% endif %}

@@ -1,0 +1,5 @@
+{% if lightning.enabled and lightning.training_scaffolding %}
+# {{ infra.display_name or infra.name }} - Training Dependencies
+agentlightning[apo,verl]>=0.3.0
+openai>=1.0.0
+{% endif %}

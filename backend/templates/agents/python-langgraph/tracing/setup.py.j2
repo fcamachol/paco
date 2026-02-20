@@ -1,0 +1,80 @@
+{% if lightning.enabled %}
+"""
+{{ agent.name }} - Agent Lightning Tracing Setup
+Simplified tracing initialization for standalone agents.
+
+Usage:
+    from tracing.setup import init_tracing
+    tracer, store = init_tracing("{{ agent.name }}")
+"""
+
+import logging
+import os
+
+import agentlightning as agl
+from agentlightning.store import InMemoryLightningStore
+
+logger = logging.getLogger(__name__)
+
+_store = None
+_tracer = None
+
+
+def init_tracing(
+    service_name: str,
+    otlp_endpoint: str | None = None,
+) -> tuple:
+    """
+    Initialize agent-lightning tracing for this agent.
+
+    Args:
+        service_name: Name of this agent service
+        otlp_endpoint: Optional OTLP endpoint for exporting traces.
+
+    Returns:
+        Tuple of (tracer_configured: bool, store: InMemoryLightningStore)
+    """
+    global _store, _tracer
+
+    if _store is not None:
+        return _tracer, _store
+
+    otlp_endpoint = otlp_endpoint or os.getenv("OTLP_ENDPOINT")
+
+    _store = InMemoryLightningStore()
+    logger.info(f"Initialized InMemoryLightningStore for {service_name}")
+
+    agl.setup_logging()
+
+    _tracer = True
+    logger.info(
+        f"Agent-Lightning tracing initialized for {service_name}"
+        + (f" (OTLP endpoint: {otlp_endpoint})" if otlp_endpoint else "")
+    )
+
+    return _tracer, _store
+
+
+def get_store() -> InMemoryLightningStore | None:
+    return _store
+
+
+def get_tracer():
+    return _tracer
+
+
+async def shutdown_tracing():
+    pass
+{% else %}
+def init_tracing(*args, **kwargs):
+    return False, None
+
+def get_store():
+    return None
+
+def get_tracer():
+    return None
+
+async def shutdown_tracing():
+    pass
+{% endif %}

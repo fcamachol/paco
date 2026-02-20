@@ -1,0 +1,19 @@
+module.exports = {
+  apps: [{
+    name: '{{ agent.name }}',
+    script: 'dist/server.js',
+    env: {
+      NODE_ENV: 'production',
+      PORT: {{ agent.port }},
+      PACO_API_URL: process.env.PACO_API_URL || '',
+      PACO_AGENT_ID: process.env.PACO_AGENT_ID || '',
+{% for key, value in env_vars.items() %}
+      {{ key }}: '{{ value }}',
+{% endfor %}
+    },
+    max_memory_restart: '500M',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+  }],
+};

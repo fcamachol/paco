@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY agents/{{ agent.agent_id_slug }}/requirements.txt ./agent_requirements.txt
+RUN pip install --no-cache-dir -r agent_requirements.txt
+COPY shared/ ./shared/
+COPY agents/{{ agent.agent_id_slug }}/ ./agent/
+COPY hive_worker/{{ agent.agent_id_slug }}/ ./hive_worker/
+CMD ["uvicorn", "hive_worker.main:app", "--host", "0.0.0.0", "--port", "8000"]

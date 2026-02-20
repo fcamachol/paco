@@ -1,0 +1,147 @@
+services:
+  # ClickHouse - Required for Langfuse V3
+  clickhouse:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.clickhouse
+    container_name: paco-clickhouse
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_secret
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL - Central database for PACO and Langfuse
+  postgres:
+    build:
+      context: ./db
+      dockerfile: Dockerfile.postgres
+    container_name: paco-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-paco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paco_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-paco}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paco}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Session cache, pub/sub, memory persistence
+  redis:
+    image: redis:7-alpine
+    container_name: paco-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Langfuse - LLM observability, token tracking, cost analytics
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: paco-langfuse
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-paco}:${POSTGRES_PASSWORD:-paco_secret}@postgres:5432/langfuse
+      REDIS_CONNECTION_STRING: redis://redis:6379
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_secret
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse_secret@clickhouse:9000/langfuse
+      NEXTAUTH_URL: ${LANGFUSE_URL:-http://localhost:3001}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-your-nextauth-secret-change-me}
+      SALT: ${LANGFUSE_SALT:-your-salt-change-me}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-03f241422af14fd11e52edf9794089cb4a4bdb8f873fc1eb1e3a0ceea92dd0c2}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY:-false}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+
+  # PACO Backend - FastAPI Control Plane API
+  paco-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: paco-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-paco}:${POSTGRES_PASSWORD:-paco_secret}@postgres:5432/paco
+      REDIS_URL: redis://redis:6379
+      SECRET_KEY: ${PACO_SECRET_KEY:-your-secret-key-change-me}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: http://langfuse:3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3006,http://localhost:3001}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # PACO Worker - Redis queue background task processor
+  paco-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: paco-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-paco}:${POSTGRES_PASSWORD:-paco_secret}@postgres:5432/paco
+      REDIS_URL: redis://redis:6379
+      QUEUE_REDIS_DB: 1
+      SECRET_KEY: ${PACO_SECRET_KEY:-your-secret-key-change-me}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: http://langfuse:3000
+    command: ["python", "-m", "app.services.queue.worker"]
+
+  # PACO Frontend - Next.js Control Plane UI
+  paco-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: paco-frontend
+    restart: unless-stopped
+    depends_on:
+      - paco-backend
+    environment:
+      BACKEND_URL: "http://paco-backend:8000"
+      NEXT_PUBLIC_API_URL: ${PACO_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_LANGFUSE_URL: ${LANGFUSE_URL:-http://localhost:3001}
+      NEXTAUTH_URL: ${PACO_URL:-http://localhost:3006}
+      NEXTAUTH_SECRET: ${PACO_NEXTAUTH_SECRET:-your-nextauth-secret-change-me}
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:
+  clickhouse_logs:

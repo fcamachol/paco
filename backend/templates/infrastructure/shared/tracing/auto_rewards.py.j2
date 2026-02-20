@@ -1,0 +1,243 @@
+{% if lightning.enabled and lightning.auto_rewards %}
+"""
+{{ infra.display_name or infra.name }} - Automatic Reward Heuristics
+Derives reward signals from conversation patterns without human labeling.
+
+Reward signals:
+    +0.8  User expressed gratitude → Satisfied
+    +0.5  Conversation ended in <3 turns → Efficient resolution
+    -0.5  Agent was re-routed mid-conversation → Likely misclassification
+    -0.7  User asked to speak to human → Agent couldn't help
+    -0.6  User repeated same question → Agent response unclear
+    -0.3  Fallback agent triggered → Primary agent unavailable or misrouted
+"""
+
+import logging
+import re
+
+from agentlightning.agent import emit_reward
+
+logger = logging.getLogger(__name__)
+
+{% if lightning.language | default("es") == "es" %}
+# Patterns para detectar satisfaccion (Spanish)
+GRATITUDE_PATTERNS = [
+    r"\bgracias\b", r"\bmuchas gracias\b", r"\bperfecto\b",
+    r"\bexcelente\b", r"\bgenial\b", r"\bmuy bien\b",
+    r"\bme ayudaste\b", r"\bme sirvió\b",
+]
+
+# Patterns para detectar escalamiento / frustracion
+ESCALATION_PATTERNS = [
+    r"\bhablar con (una |un )?persona\b",
+    r"\bagente humano\b",
+    r"\bpersona real\b",
+    r"\bquiero hablar\b",
+    r"\boperador\b",
+    r"\bsupervisor\b",
+    r"\bno me (ayudas?|sirves?|entiendes?)\b",
+]
+
+# Patterns para detectar repeticion / confusion
+REPETITION_INDICATORS = [
+    r"\bya te (dije|pregunté)\b",
+    r"\brepito\b",
+    r"\botra vez\b",
+    r"\bno entendiste\b",
+    r"\beso no es lo que (te )?pregunt[eé]\b",
+    r"\bte estoy diciendo\b",
+]
+{% elif lightning.language | default("es") == "both" %}
+# Bilingual patterns (English + Spanish)
+GRATITUDE_PATTERNS = [
+    # English
+    r"\bthanks?\b", r"\bthank you\b", r"\bperfect\b",
+    r"\bexcellent\b", r"\bgreat\b", r"\bawesome\b",
+    r"\bhelped me\b", r"\bvery helpful\b",
+    # Spanish
+    r"\bgracias\b", r"\bmuchas gracias\b", r"\bperfecto\b",
+    r"\bexcelente\b", r"\bgenial\b", r"\bmuy bien\b",
+    r"\bme ayudaste\b", r"\bme sirvió\b",
+]
+
+ESCALATION_PATTERNS = [
+    # English
+    r"\bspeak to (a |an )?person\b",
+    r"\bhuman agent\b", r"\breal person\b",
+    r"\bwant to talk\b", r"\boperator\b", r"\bsupervisor\b",
+    r"\bnot help(ing|ful)?\b",
+    # Spanish
+    r"\bhablar con (una |un )?persona\b",
+    r"\bagente humano\b", r"\bpersona real\b",
+    r"\bquiero hablar\b", r"\boperador\b",
+    r"\bno me (ayudas?|sirves?|entiendes?)\b",
+]
+
+REPETITION_INDICATORS = [
+    # English
+    r"\bi already (told|asked) you\b", r"\bi repeat\b",
+    r"\bagain\b", r"\byou (didn.t|don.t) understand\b",
+    r"\bthat.s not what i (asked|said)\b", r"\bi.m telling you\b",
+    # Spanish
+    r"\bya te (dije|pregunté)\b", r"\brepito\b",
+    r"\botra vez\b", r"\bno entendiste\b",
+    r"\beso no es lo que (te )?pregunt[eé]\b", r"\bte estoy diciendo\b",
+]
+{% else %}
+# Patterns for detecting satisfaction signals (English)
+GRATITUDE_PATTERNS = [
+    r"\bthanks?\b", r"\bthank you\b", r"\bperfect\b",
+    r"\bexcellent\b", r"\bgreat\b", r"\bawesome\b",
+    r"\bhelped me\b", r"\bvery helpful\b",
+]
+
+# Patterns for detecting frustration / escalation signals
+ESCALATION_PATTERNS = [
+    r"\bspeak to (a |an )?person\b",
+    r"\bhuman agent\b",
+    r"\breal person\b",
+    r"\bwant to talk\b",
+    r"\boperator\b",
+    r"\bsupervisor\b",
+    r"\bnot help(ing|ful)?\b",
+]
+
+# Patterns for detecting repetition / confusion
+REPETITION_INDICATORS = [
+    r"\bi already (told|asked) you\b",
+    r"\bi repeat\b",
+    r"\bagain\b",
+    r"\byou (didn.t|don.t) understand\b",
+    r"\bthat.s not what i (asked|said)\b",
+    r"\bi.m telling you\b",
+]
+{% endif %}
+
+
+class AutoRewardEvaluator:
+    """
+    Evaluates conversation events and emits reward signals automatically.
+
+    Used by the orchestrator to generate training data from production traffic
+    without requiring manual labeling.
+    """
+
+    def evaluate_user_message(
+        self,
+        message: str,
+        conversation_id: str | None = None,
+        turn_count: int = 0,
+    ) -> float | None:
+        """
+        Evaluate a user message for automatic reward signals.
+
+        Returns:
+            Reward value if a signal was detected, None otherwise
+        """
+        lower_message = message.lower().strip()
+        reward = None
+
+        # Check for gratitude (positive signal)
+        if any(re.search(p, lower_message) for p in GRATITUDE_PATTERNS):
+            reward = 0.8
+            self._emit(reward, "gratitude", conversation_id)
+
+        # Check for escalation request (negative signal)
+        elif any(re.search(p, lower_message) for p in ESCALATION_PATTERNS):
+            reward = -0.7
+            self._emit(reward, "escalation_request", conversation_id)
+
+        # Check for repetition / frustration (negative signal)
+        elif any(re.search(p, lower_message) for p in REPETITION_INDICATORS):
+            reward = -0.6
+            self._emit(reward, "repetition_detected", conversation_id)
+
+        return reward
+
+    def evaluate_routing_event(
+        self,
+        event_type: str,
+        conversation_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> float:
+        """Evaluate a routing event for automatic reward signals."""
+        metadata = metadata or {}
+
+        reward_map = {
+            "fallback_triggered": -0.3,
+            "rerouted_mid_conversation": -0.5,
+            "efficient_resolution": 0.5,
+            "agent_success": 0.3,
+        }
+
+        reward = reward_map.get(event_type, 0.0)
+        self._emit(reward, event_type, conversation_id, metadata)
+        return reward
+
+    def evaluate_conversation_end(
+        self,
+        turn_count: int,
+        had_fallback: bool = False,
+        had_reroute: bool = False,
+        conversation_id: str | None = None,
+    ) -> float:
+        """Evaluate the overall conversation quality at conversation end."""
+        reward = 0.0
+
+        if turn_count <= 3 and not had_fallback:
+            reward += 0.5
+
+        if had_fallback:
+            reward -= 0.3
+        if had_reroute:
+            reward -= 0.5
+
+        if reward != 0.0:
+            self._emit(reward, "conversation_end", conversation_id, {
+                "turn_count": turn_count,
+                "had_fallback": had_fallback,
+                "had_reroute": had_reroute,
+            })
+
+        return reward
+
+    def _emit(
+        self,
+        reward: float,
+        signal_type: str,
+        conversation_id: str | None = None,
+        metadata: dict | None = None,
+    ):
+        """Emit a reward signal via agent-lightning."""
+        attributes = {
+            "reward.signal_type": signal_type,
+            "reward.source": "auto_heuristic",
+        }
+        if conversation_id:
+            attributes["conversation_id"] = conversation_id
+        if metadata:
+            for k, v in metadata.items():
+                attributes[f"reward.{k}"] = str(v)
+
+        try:
+            emit_reward(reward, attributes=attributes)
+            logger.debug(
+                f"Auto-reward emitted: {signal_type}={reward:.2f} "
+                f"(conversation={conversation_id})"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to emit auto-reward: {e}")
+
+
+_evaluator: AutoRewardEvaluator | None = None
+
+
+def get_reward_evaluator() -> AutoRewardEvaluator:
+    """Get or create the singleton reward evaluator."""
+    global _evaluator
+    if _evaluator is None:
+        _evaluator = AutoRewardEvaluator()
+    return _evaluator
+{% else %}
+# Auto-rewards are disabled for this project
+{% endif %}

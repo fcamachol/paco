@@ -1,0 +1,157 @@
+{% if lightning.enabled and lightning.training_scaffolding %}
+"""
+{{ infra.display_name or infra.name }} - Classifier Prompt Optimization (APO)
+Uses agent-lightning's APO algorithm to optimize the classification prompt.
+
+Usage:
+    python -m training.optimize_classifier
+
+Prerequisites:
+    pip install agentlightning[apo]
+    export OPENAI_API_KEY=...  (or use LiteLLM proxy for Claude)
+"""
+
+import asyncio
+import json
+import logging
+import os
+from pathlib import Path
+
+import agentlightning as agl
+from agentlightning.agent import emit_reward, rollout
+from openai import AsyncOpenAI
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from orchestrator.classifier import CLASSIFICATION_PROMPT, classify_intent
+
+logger = logging.getLogger(__name__)
+
+DATASETS_DIR = Path(__file__).parent / "datasets"
+PROMPTS_DIR = Path(__file__).parent.parent / "orchestrator" / "prompts"
+
+
+def load_dataset(path: Path) -> list[dict]:
+    """Load a JSONL dataset."""
+    examples = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            examples.append(json.loads(line))
+    return examples
+
+
+@rollout
+async def classifier_rollout(task: dict, prompt_template: str) -> float:
+    """
+    Wraps classify_intent for APO training.
+    APO will vary prompt_template to find the optimal version.
+    """
+    prompt_file = PROMPTS_DIR / "classification_prompt.txt"
+    original_content = None
+    if prompt_file.exists():
+        original_content = prompt_file.read_text(encoding="utf-8")
+
+    try:
+        prompt_file.write_text(prompt_template, encoding="utf-8")
+
+        result = await classify_intent(
+            message=task["message"],
+            context=task.get("context"),
+        )
+
+        is_correct = result["category"] == task["expected_category"]
+        reward = 1.0 if is_correct else 0.0
+
+        emit_reward(reward, attributes={
+            "expected": task["expected_category"],
+            "predicted": result["category"],
+            "method": result.get("method", "unknown"),
+        })
+
+        return reward
+
+    finally:
+        if original_content is not None:
+            prompt_file.write_text(original_content, encoding="utf-8")
+
+
+async def run_optimization():
+    """Run APO optimization on the classifier prompt."""
+    train_path = DATASETS_DIR / "classifier_train.jsonl"
+    val_path = DATASETS_DIR / "classifier_val.jsonl"
+
+    if not train_path.exists():
+        logger.error(
+            "Training dataset not found. Create training data first."
+        )
+        return
+
+    train_data = load_dataset(train_path)
+    val_data = load_dataset(val_path) if val_path.exists() else []
+
+    logger.info(f"Loaded {len(train_data)} train, {len(val_data)} val examples")
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    base_url = os.getenv("OPENAI_API_BASE")
+
+    client_kwargs = {"api_key": api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+
+    openai_client = AsyncOpenAI(**client_kwargs)
+
+    algo = agl.APO(
+        async_openai_client=openai_client,
+        gradient_batch_size=4,
+        val_batch_size=min(16, len(val_data)),
+        beam_width=2,
+        beam_rounds=3,
+    )
+
+    initial_prompt = CLASSIFICATION_PROMPT
+
+    store = agl.InMemoryLightningStore()
+    trainer = agl.Trainer(
+        algorithm=algo,
+        store=store,
+        initial_resources={
+            "prompt_template": agl.PromptTemplate(
+                template=initial_prompt,
+                engine="f-string",
+            ),
+        },
+    )
+
+    logger.info("Starting APO optimization...")
+    trainer.fit(
+        agent=classifier_rollout,
+        train_dataset=train_data,
+        val_dataset=val_data,
+    )
+
+    best_resources = store.get_latest_resources()
+    if best_resources and "prompt_template" in best_resources:
+        best_prompt = best_resources["prompt_template"]
+        logger.info(f"Best prompt found (template):\n{best_prompt}")
+
+        optimized_path = PROMPTS_DIR / "classification_prompt_optimized.txt"
+        optimized_path.write_text(str(best_prompt), encoding="utf-8")
+        logger.info(f"Optimized prompt saved to {optimized_path}")
+
+        logger.info(
+            "To activate the optimized prompt, copy it:\n"
+            f"  cp {optimized_path} {PROMPTS_DIR / 'classification_prompt.txt'}"
+        )
+    else:
+        logger.warning("No optimized prompt found in store resources")
+
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(run_optimization())
+
+
+if __name__ == "__main__":
+    main()
+{% endif %}
