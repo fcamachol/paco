@@ -20,62 +20,40 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    # McpServer — managed deployment columns
-    op.add_column(
-        "mcp_servers",
-        sa.Column("deployment_mode", sa.String(50), server_default="external", nullable=False),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("container_id", sa.String(100), nullable=True),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("container_name", sa.String(255), nullable=True),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("host_port", sa.Integer, nullable=True),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("image_tag", sa.String(255), server_default="latest", nullable=False),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("deploy_status", sa.String(50), server_default="undeployed", nullable=False),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("deploy_error", sa.Text, nullable=True),
-    )
-    op.add_column(
-        "mcp_servers",
-        sa.Column("last_deployed_at", sa.DateTime(timezone=True), nullable=True),
-    )
+def _has_column(table, column):
+    return column in [c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)]
 
-    # Tool — handler configuration columns
-    op.add_column(
-        "tools",
-        sa.Column("handler_type", sa.String(50), nullable=True),
-    )
-    op.add_column(
-        "tools",
-        sa.Column("handler_config", JSONB, nullable=True),
-    )
-    op.add_column(
-        "tools",
-        sa.Column("output_transform", sa.Text, nullable=True),
-    )
-    op.add_column(
-        "tools",
-        sa.Column("retry_config", JSONB, nullable=True),
-    )
-    op.add_column(
-        "tools",
-        sa.Column("timeout_ms", sa.Integer, nullable=True),
-    )
+
+def upgrade() -> None:
+    # McpServer - managed deployment columns
+    if not _has_column("mcp_servers", "deployment_mode"):
+        op.add_column("mcp_servers", sa.Column("deployment_mode", sa.String(50), server_default="external", nullable=False))
+    if not _has_column("mcp_servers", "container_id"):
+        op.add_column("mcp_servers", sa.Column("container_id", sa.String(100), nullable=True))
+    if not _has_column("mcp_servers", "container_name"):
+        op.add_column("mcp_servers", sa.Column("container_name", sa.String(255), nullable=True))
+    if not _has_column("mcp_servers", "host_port"):
+        op.add_column("mcp_servers", sa.Column("host_port", sa.Integer, nullable=True))
+    if not _has_column("mcp_servers", "image_tag"):
+        op.add_column("mcp_servers", sa.Column("image_tag", sa.String(255), server_default="latest", nullable=False))
+    if not _has_column("mcp_servers", "deploy_status"):
+        op.add_column("mcp_servers", sa.Column("deploy_status", sa.String(50), server_default="undeployed", nullable=False))
+    if not _has_column("mcp_servers", "deploy_error"):
+        op.add_column("mcp_servers", sa.Column("deploy_error", sa.Text, nullable=True))
+    if not _has_column("mcp_servers", "last_deployed_at"):
+        op.add_column("mcp_servers", sa.Column("last_deployed_at", sa.DateTime(timezone=True), nullable=True))
+
+    # Tool - handler configuration columns
+    if not _has_column("tools", "handler_type"):
+        op.add_column("tools", sa.Column("handler_type", sa.String(50), nullable=True))
+    if not _has_column("tools", "handler_config"):
+        op.add_column("tools", sa.Column("handler_config", JSONB, nullable=True))
+    if not _has_column("tools", "output_transform"):
+        op.add_column("tools", sa.Column("output_transform", sa.Text, nullable=True))
+    if not _has_column("tools", "retry_config"):
+        op.add_column("tools", sa.Column("retry_config", JSONB, nullable=True))
+    if not _has_column("tools", "timeout_ms"):
+        op.add_column("tools", sa.Column("timeout_ms", sa.Integer, nullable=True))
 
 
 def downgrade() -> None:

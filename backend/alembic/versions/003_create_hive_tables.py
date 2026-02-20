@@ -20,8 +20,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "hive_coordinators",
+    tables = sa.inspect(op.get_bind()).get_table_names()
+
+    if "hive_coordinators" not in tables:
+        op.create_table(
+            "hive_coordinators",
         sa.Column(
             "id",
             UUID(as_uuid=True),
@@ -67,8 +70,9 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
-        "hive_tasks",
+    if "hive_tasks" not in tables:
+        op.create_table(
+            "hive_tasks",
         sa.Column(
             "id",
             UUID(as_uuid=True),
@@ -102,8 +106,9 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
-        "hive_messages",
+    if "hive_messages" not in tables:
+        op.create_table(
+            "hive_messages",
         sa.Column(
             "id",
             UUID(as_uuid=True),

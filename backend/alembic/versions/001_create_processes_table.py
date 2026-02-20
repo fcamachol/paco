@@ -17,6 +17,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if "processes" in sa.inspect(op.get_bind()).get_table_names():
+        return
     op.create_table(
         "processes",
         sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),

@@ -20,38 +20,50 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table, column):
+    return column in [c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)]
+
+
 def upgrade() -> None:
     # -- company_messages table ------------------------------------------------
-    op.create_table(
-        "company_messages",
-        sa.Column("id", UUID(as_uuid=True), server_default=sa.text("uuid_generate_v4()"), primary_key=True),
-        sa.Column("infrastructure_id", UUID(as_uuid=True), sa.ForeignKey("infrastructures.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("sender_slug", sa.String(255), nullable=False),
-        sa.Column("recipient_slug", sa.String(255), nullable=True),
-        sa.Column("department_id", UUID(as_uuid=True), sa.ForeignKey("company_departments.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("message_type", sa.String(50), nullable=False),
-        sa.Column("subject", sa.String(500), nullable=True),
-        sa.Column("content", sa.Text, nullable=False),
-        sa.Column("metadata", JSONB, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("status", sa.String(50), server_default="sent"),
-        sa.Column("parent_message_id", UUID(as_uuid=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.create_index("ix_company_messages_infra_recipient", "company_messages", ["infrastructure_id", "recipient_slug"])
-    op.create_index("ix_company_messages_infra_sender", "company_messages", ["infrastructure_id", "sender_slug"])
-    op.create_index("ix_company_messages_status", "company_messages", ["status"])
+    if "company_messages" not in sa.inspect(op.get_bind()).get_table_names():
+        op.create_table(
+            "company_messages",
+            sa.Column("id", UUID(as_uuid=True), server_default=sa.text("uuid_generate_v4()"), primary_key=True),
+            sa.Column("infrastructure_id", UUID(as_uuid=True), sa.ForeignKey("infrastructures.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("sender_slug", sa.String(255), nullable=False),
+            sa.Column("recipient_slug", sa.String(255), nullable=True),
+            sa.Column("department_id", UUID(as_uuid=True), sa.ForeignKey("company_departments.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("message_type", sa.String(50), nullable=False),
+            sa.Column("subject", sa.String(500), nullable=True),
+            sa.Column("content", sa.Text, nullable=False),
+            sa.Column("metadata", JSONB, server_default=sa.text("'{}'::jsonb")),
+            sa.Column("status", sa.String(50), server_default="sent"),
+            sa.Column("parent_message_id", UUID(as_uuid=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+            sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
+        )
+        op.create_index("ix_company_messages_infra_recipient", "company_messages", ["infrastructure_id", "recipient_slug"])
+        op.create_index("ix_company_messages_infra_sender", "company_messages", ["infrastructure_id", "sender_slug"])
+        op.create_index("ix_company_messages_status", "company_messages", ["status"])
 
     # -- company_tasks: add delegation fields ----------------------------------
-    op.add_column("company_tasks", sa.Column("requested_by_slug", sa.String(255), nullable=True))
-    op.add_column("company_tasks", sa.Column("parent_task_id", UUID(as_uuid=True), nullable=True))
+    if not _has_column("company_tasks", "requested_by_slug"):
+        op.add_column("company_tasks", sa.Column("requested_by_slug", sa.String(255), nullable=True))
+    if not _has_column("company_tasks", "parent_task_id"):
+        op.add_column("company_tasks", sa.Column("parent_task_id", UUID(as_uuid=True), nullable=True))
 
     # -- company_configs: add supervisor mode fields ---------------------------
-    op.add_column("company_configs", sa.Column("supervisor_mode", sa.Boolean, server_default=sa.text("true")))
-    op.add_column("company_configs", sa.Column("missed_heartbeat_threshold", sa.Integer, server_default=sa.text("3")))
-    op.add_column("company_configs", sa.Column("auto_recovery_enabled", sa.Boolean, server_default=sa.text("true")))
-    op.add_column("company_configs", sa.Column("morning_standup_enabled", sa.Boolean, server_default=sa.text("true")))
-    op.add_column("company_configs", sa.Column("standup_cron", sa.String(255), server_default="0 9 * * 1-5"))
+    if not _has_column("company_configs", "supervisor_mode"):
+        op.add_column("company_configs", sa.Column("supervisor_mode", sa.Boolean, server_default=sa.text("true")))
+    if not _has_column("company_configs", "missed_heartbeat_threshold"):
+        op.add_column("company_configs", sa.Column("missed_heartbeat_threshold", sa.Integer, server_default=sa.text("3")))
+    if not _has_column("company_configs", "auto_recovery_enabled"):
+        op.add_column("company_configs", sa.Column("auto_recovery_enabled", sa.Boolean, server_default=sa.text("true")))
+    if not _has_column("company_configs", "morning_standup_enabled"):
+        op.add_column("company_configs", sa.Column("morning_standup_enabled", sa.Boolean, server_default=sa.text("true")))
+    if not _has_column("company_configs", "standup_cron"):
+        op.add_column("company_configs", sa.Column("standup_cron", sa.String(255), server_default="0 9 * * 1-5"))
 
 
 def downgrade() -> None:
