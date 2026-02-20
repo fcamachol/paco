@@ -1132,6 +1132,21 @@ class ApiClient {
   }
 
   // Builder endpoints
+  async sendBuilderMessage(sessionId: string, message: string): Promise<Response> {
+    const url = `${this.baseUrl}/api/builder/sessions/${sessionId}/message`;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.token) {
+      headers["Authorization"] = `Bearer ${this.token}`;
+    }
+    return fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message }),
+    });
+  }
+
   async getBuilderArtifacts(sessionId: string) {
     return this.request<BuilderArtifacts>(`/api/builder/sessions/${sessionId}/artifacts`);
   }
