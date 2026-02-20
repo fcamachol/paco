@@ -1197,6 +1197,7 @@ export interface BuilderArtifacts {
 export interface BuilderSession {
   id: string;
   status?: string;
+  phase?: string;
   agent_id?: string;
   created_at?: string;
 }
