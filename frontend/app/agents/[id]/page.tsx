@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useParams } from "next/navigation";
 import {
@@ -12,20 +12,18 @@ import {
   Trash2,
   Save,
   X,
-  Plus,
-  Eye,
-  EyeOff,
   Key,
   Wrench,
   Sparkles,
   RefreshCw,
-  AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/ui/Header";
 import { api, AgentDetail, AgentToolInfo, ApiError, Tool, Skill } from "@/lib/api";
 import { cn, getStatusColor, formatRelativeTime } from "@/lib/utils";
 import { useIsOperator } from "@/lib/auth";
+import { AgentConfigForm } from "@/components/agent-config";
+import type { AgentFormValues } from "@/components/agent-config";
 
 type TabId = "config" | "tools" | "skills";
 
@@ -38,14 +36,12 @@ export default function AgentDetailPage() {
 
   const [activeTab, setActiveTab] = useState<TabId>("config");
   const [editing, setEditing] = useState(false);
-  const [editYaml, setEditYaml] = useState("");
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editDescription, setEditDescription] = useState("");
-  const [editEnvVars, setEditEnvVars] = useState<Array<{ key: string; value: string }>>([]);
+  const [editAgentConfig, setEditAgentConfig] = useState<Partial<AgentFormValues>>({});
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [visibleEnvKeys, setVisibleEnvKeys] = useState<Set<string>>(new Set());
 
   const {
     data: agent,
@@ -74,16 +70,20 @@ export default function AgentDetailPage() {
     if (!agent) return;
     setEditDisplayName(agent.display_name || "");
     setEditDescription(agent.description || "");
-    setEditYaml(
-      agent.config ? yamlFromConfig(agent.config) : ""
-    );
-    // Convert env_vars object to array for editing
-    const envEntries = Object.entries(agent.env_vars || {}).map(([key, value]) => ({
-      key,
-      value: String(value),
-    }));
-    setEditEnvVars(envEntries);
-    setVisibleEnvKeys(new Set());
+
+    // Populate form from agent detail + sdk_config
+    const sdkConfig = agent.sdk_config || {};
+    setEditAgentConfig({
+      name: agent.name,
+      model: agent.model || "claude-sonnet-4-5-20250929",
+      systemPrompt: agent.system_prompt || "",
+      temperature: sdkConfig.temperature ?? 1.0,
+      maxTokens: sdkConfig.max_tokens,
+      topP: sdkConfig.top_p,
+      topK: sdkConfig.top_k,
+      stopSequences: sdkConfig.stop_sequences || [],
+      envVars: agent.env_vars || {},
+    });
     setEditing(true);
     setError(null);
   };
@@ -92,6 +92,10 @@ export default function AgentDetailPage() {
     setEditing(false);
     setError(null);
   };
+
+  const handleConfigChange = useCallback((values: AgentFormValues) => {
+    setEditAgentConfig(values);
+  }, []);
 
   const showSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -116,16 +120,28 @@ export default function AgentDetailPage() {
 
   const updateMutation = useMutation({
     mutationFn: () => {
-      // Convert env_vars array back to object
-      const envVarsObj: Record<string, string> = {};
-      for (const { key, value } of editEnvVars) {
-        if (key.trim()) envVarsObj[key.trim()] = value;
+      // Build sdk_config from form parameters
+      const sdkConfig: Record<string, any> = {};
+      if (editAgentConfig.temperature !== undefined) sdkConfig.temperature = editAgentConfig.temperature;
+      if (editAgentConfig.maxTokens !== undefined) sdkConfig.max_tokens = editAgentConfig.maxTokens;
+      if (editAgentConfig.topP !== undefined) sdkConfig.top_p = editAgentConfig.topP;
+      if (editAgentConfig.topK !== undefined) sdkConfig.top_k = editAgentConfig.topK;
+      if (editAgentConfig.stopSequences && editAgentConfig.stopSequences.length > 0) {
+        sdkConfig.stop_sequences = editAgentConfig.stopSequences;
       }
+
+      // Resolve model (handle custom model)
+      const model = editAgentConfig.model === "custom" && editAgentConfig.customModel
+        ? editAgentConfig.customModel
+        : editAgentConfig.model || undefined;
+
       return api.updateAgent(id, {
         display_name: editDisplayName || undefined,
         description: editDescription || undefined,
-        config_yaml: editYaml || undefined,
-        env_vars: envVarsObj,
+        model,
+        system_prompt: editAgentConfig.systemPrompt,
+        env_vars: editAgentConfig.envVars || {},
+        sdk_config: Object.keys(sdkConfig).length > 0 ? sdkConfig : undefined,
       });
     },
     onSuccess: () => {
@@ -461,117 +477,17 @@ export default function AgentDetailPage() {
                       className="input w-full resize-none"
                     />
                   </div>
-                  {/* Environment Variables */}
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-2">
-                      <Key className="w-3.5 h-3.5 inline mr-1" />
-                      Credentials &amp; Environment Variables
-                    </label>
-                    {editEnvVars.length === 0 && (
-                      <p className="text-sm text-foreground-muted italic mb-2">
-                        Using global default API keys
-                      </p>
-                    )}
-                    <div className="space-y-2 mb-2">
-                      {editEnvVars.map((entry, index) => {
-                        const sensitive = ['API_KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'CREDENTIAL'].some(
-                          (p) => entry.key.toUpperCase().includes(p)
-                        );
-                        const isVisible = visibleEnvKeys.has(entry.key);
-                        return (
-                          <div key={index} className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={entry.key}
-                              onChange={(e) => {
-                                const next = [...editEnvVars];
-                                next[index] = { ...next[index], key: e.target.value };
-                                setEditEnvVars(next);
-                              }}
-                              placeholder="KEY_NAME"
-                              className="input flex-1 font-mono text-sm"
-                            />
-                            <div className="relative flex-1">
-                              <input
-                                type={sensitive && !isVisible ? "password" : "text"}
-                                value={entry.value}
-                                onChange={(e) => {
-                                  const next = [...editEnvVars];
-                                  next[index] = { ...next[index], value: e.target.value };
-                                  setEditEnvVars(next);
-                                }}
-                                placeholder={sensitive ? "••••••••" : "value"}
-                                className="input w-full font-mono text-sm pr-8"
-                              />
-                              {sensitive && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const next = new Set(visibleEnvKeys);
-                                    if (isVisible) next.delete(entry.key);
-                                    else next.add(entry.key);
-                                    setVisibleEnvKeys(next);
-                                  }}
-                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground"
-                                >
-                                  {isVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                                </button>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setEditEnvVars(editEnvVars.filter((_, i) => i !== index))}
-                              className="p-1.5 text-foreground-muted hover:text-error rounded"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => setEditEnvVars([...editEnvVars, { key: "", value: "" }])}
-                        className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-border text-foreground-muted hover:text-foreground hover:border-foreground/30"
-                      >
-                        <Plus className="w-3 h-3" />
-                        Add Variable
-                      </button>
-                      {!editEnvVars.some((e) => e.key === "ANTHROPIC_API_KEY") && (
-                        <button
-                          type="button"
-                          onClick={() => setEditEnvVars([...editEnvVars, { key: "ANTHROPIC_API_KEY", value: "" }])}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-border text-foreground-muted hover:text-foreground hover:border-foreground/30"
-                        >
-                          <Key className="w-3 h-3" />
-                          Anthropic API Key
-                        </button>
-                      )}
-                      {!editEnvVars.some((e) => e.key === "OPENAI_API_KEY") && (
-                        <button
-                          type="button"
-                          onClick={() => setEditEnvVars([...editEnvVars, { key: "OPENAI_API_KEY", value: "" }])}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-border text-foreground-muted hover:text-foreground hover:border-foreground/30"
-                        >
-                          <Key className="w-3 h-3" />
-                          OpenAI API Key
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1">
-                      YAML Config
-                    </label>
-                    <textarea
-                      value={editYaml}
-                      onChange={(e) => setEditYaml(e.target.value)}
-                      rows={16}
-                      className="input w-full font-mono text-sm resize-y"
-                      spellCheck={false}
+
+                  {/* Agent Configuration Form */}
+                  <div className="border-t border-border pt-4">
+                    <AgentConfigForm
+                      key={agent.id}
+                      defaultValues={editAgentConfig}
+                      onChange={handleConfigChange}
+                      hideFields={['name']}
                     />
                   </div>
+
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => updateMutation.mutate()}
@@ -588,11 +504,13 @@ export default function AgentDetailPage() {
                   </div>
                 </div>
               ) : (
-                <pre className="bg-background-tertiary p-4 rounded-lg text-sm text-foreground font-mono overflow-x-auto whitespace-pre-wrap">
-                  {agent.config && Object.keys(agent.config).length > 0
-                    ? yamlFromConfig(agent.config)
-                    : "No configuration available"}
-                </pre>
+                <div className="space-y-4">
+                  <pre className="bg-background-tertiary p-4 rounded-lg text-sm text-foreground font-mono overflow-x-auto whitespace-pre-wrap">
+                    {agent.config && Object.keys(agent.config).length > 0
+                      ? configToDisplay(agent.config)
+                      : "No configuration available"}
+                  </pre>
+                </div>
               )}
             </div>
 
@@ -848,8 +766,8 @@ export default function AgentDetailPage() {
   );
 }
 
-/** Simple pretty-print of a config object as YAML-like text */
-function yamlFromConfig(config: Record<string, any>, indent = 0): string {
+/** Pretty-print a config object as YAML-like text for read-only display */
+function configToDisplay(config: Record<string, any>, indent = 0): string {
   const pad = "  ".repeat(indent);
   const lines: string[] = [];
 
@@ -858,13 +776,13 @@ function yamlFromConfig(config: Record<string, any>, indent = 0): string {
       lines.push(`${pad}${key}:`);
     } else if (typeof value === "object" && !Array.isArray(value)) {
       lines.push(`${pad}${key}:`);
-      lines.push(yamlFromConfig(value, indent + 1));
+      lines.push(configToDisplay(value, indent + 1));
     } else if (Array.isArray(value)) {
       lines.push(`${pad}${key}:`);
       for (const item of value) {
         if (typeof item === "object") {
           lines.push(`${pad}  -`);
-          lines.push(yamlFromConfig(item, indent + 2));
+          lines.push(configToDisplay(item, indent + 2));
         } else {
           lines.push(`${pad}  - ${item}`);
         }

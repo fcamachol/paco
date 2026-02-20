@@ -1350,6 +1350,7 @@ export interface CreateAgentRequest {
   env_vars?: Record<string, string>;
   type?: string;
   config_yaml?: string;
+  sdk_config?: Record<string, any>;
 }
 
 export interface UpdateAgentRequest {
@@ -1363,6 +1364,7 @@ export interface UpdateAgentRequest {
   max_thinking_tokens?: number | null;
   env_vars?: Record<string, string>;
   config_yaml?: string;
+  sdk_config?: Record<string, any>;
 }
 
 export interface ProxyConfig {

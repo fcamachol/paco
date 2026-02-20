@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  BookOpen,
 } from 'lucide-react';
 import { StepEvent } from './usePlayground';
 
@@ -38,6 +39,12 @@ const STEP_CONFIG: Record<string, {
     label: 'Agent Start',
     color: 'text-green-400',
     bgColor: 'bg-green-500/20',
+  },
+  skill_check: {
+    icon: BookOpen,
+    label: 'Skills',
+    color: 'text-violet-400',
+    bgColor: 'bg-violet-500/20',
   },
   tool_call: {
     icon: Wrench,
@@ -177,6 +184,13 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, collapsed = f
                   {!isStepExpanded && step.step === 'aggregation' && step.data.strategy && (
                     <div className="ml-4.5 text-foreground-muted truncate">
                       Strategy: {step.data.strategy}
+                    </div>
+                  )}
+                  {!isStepExpanded && step.step === 'skill_check' && (
+                    <div className="ml-4.5 text-foreground-muted truncate">
+                      {step.data.skills_loaded > 0
+                        ? `${step.data.skills_loaded} skill${step.data.skills_loaded !== 1 ? 's' : ''} loaded: ${(step.data.skill_names || []).join(', ')}`
+                        : step.data.error || 'No skills found'}
                     </div>
                   )}
                   {!isStepExpanded && step.step === 'error' && step.data.error && (

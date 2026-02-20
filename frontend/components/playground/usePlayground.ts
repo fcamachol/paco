@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 
 export interface StepEvent {
-  step: 'classification' | 'routing' | 'agent_start' | 'tool_call' | 'tool_result' | 'response' | 'error' | 'decomposition' | 'task_assigned' | 'aggregation';
+  step: 'classification' | 'routing' | 'agent_start' | 'skill_check' | 'tool_call' | 'tool_result' | 'response' | 'error' | 'decomposition' | 'task_assigned' | 'aggregation';
   agent_id?: string;
   tool_name?: string;
   data: Record<string, any>;

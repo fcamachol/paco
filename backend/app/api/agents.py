@@ -93,6 +93,7 @@ class AgentCreateRequest(BaseModel):
     max_budget_usd: Optional[float] = None
     max_thinking_tokens: Optional[int] = None
     env_vars: Dict[str, Any] = {}
+    sdk_config: Optional[Dict[str, Any]] = None
     lightning_config: Optional[Dict[str, Any]] = None
 
 
@@ -356,6 +357,7 @@ async def create_agent(
         max_budget_usd=request.max_budget_usd,
         max_thinking_tokens=request.max_thinking_tokens,
         env_vars=request.env_vars,
+        sdk_config=request.sdk_config or {},
         lightning_config=request.lightning_config or {},
         pm2_name=request.name,
         status="stopped",

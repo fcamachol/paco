@@ -125,10 +125,13 @@ async def _resolve_api_key(agent_id: Optional[str] = None) -> str:
     return os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
 
 
-async def _load_agent_skills(agent_id: Optional[str]) -> List[str]:
-    """Load enabled skill bodies from the filesystem for an agent."""
+async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[str], Optional[str]]:
+    """Load enabled skill bodies from the filesystem for an agent.
+
+    Returns (skill_bodies, skill_names, error_message).
+    """
     if not agent_id:
-        return []
+        return [], [], None
     try:
         from app.db.session import async_session_maker
         from app.db.models import Agent, AgentSkill
@@ -144,10 +147,14 @@ async def _load_agent_skills(agent_id: Optional[str]) -> List[str]:
             )
             agent = result.scalar_one_or_none()
             if not agent:
-                return []
+                return [], [], f"Agent '{agent_id}' not found in DB for skill loading"
+
+            if not agent.agent_skills:
+                return [], [], None
 
             fs = SkillFilesystemService()
             skill_bodies = []
+            skill_names = []
             for ask in agent.agent_skills:
                 if not ask.is_enabled:
                     continue
@@ -156,12 +163,13 @@ async def _load_agent_skills(agent_id: Optional[str]) -> List[str]:
                     body = fs_data.get("body", "").strip()
                     if body:
                         skill_name = fs_data.get("name", ask.skill.code)
+                        skill_names.append(skill_name)
                         skill_bodies.append(f"## Skill: {skill_name}\n\n{body}")
                 except FileNotFoundError:
-                    pass
-            return skill_bodies
-    except Exception:
-        return []
+                    skill_names.append(f"{ask.skill.code} (SKILL.md not found)")
+            return skill_bodies, skill_names, None
+    except Exception as e:
+        return [], [], f"Skill loading error: {str(e)}"
 
 
 async def _call_mcp_tool(tool_name: str, tool_input: Dict[str, Any], agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -364,10 +372,21 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
         )
 
         # Load and inject skill prompts into the system prompt
-        skill_bodies = await _load_agent_skills(request.agent_id)
+        skill_bodies, skill_names, skill_error = await _load_agent_skills(request.agent_id)
         if skill_bodies:
-            skills_section = "\n\n# Skills\n\n" + "\n\n".join(skill_bodies)
+            skills_section = "\n\n# Skills\n\nYou have the following skills available. You MUST check and use them when relevant to the user's request.\n\n" + "\n\n".join(skill_bodies)
             system_prompt = system_prompt + skills_section
+
+        # Emit skill loading status so it's visible in the execution trace
+        yield format_sse(make_step(
+            "skill_check",
+            agent_id=agent_name,
+            data={
+                "skills_loaded": len(skill_bodies),
+                "skill_names": skill_names,
+                "error": skill_error,
+            },
+        ))
 
         # Extract tools from config
         tools_payload = []

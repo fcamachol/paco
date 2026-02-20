@@ -36,6 +36,9 @@ function getNodeClassName(nodeId: string, step: StepEvent | null): string | unde
   if (step.step === "agent_start" && (nodeId === AGENT_NODE_ID || nodeId === SKILLS_NODE_ID)) {
     return "node-active";
   }
+  if (step.step === "skill_check" && nodeId === SKILLS_NODE_ID) {
+    return "node-active";
+  }
   if (step.step === "tool_call") {
     if (nodeId === AGENT_NODE_ID || nodeId === TOOLS_NODE_ID) {
       return "node-tool-running";
