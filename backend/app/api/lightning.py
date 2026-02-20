@@ -9,7 +9,7 @@ import asyncio
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID as PyUUID
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from sqlalchemy import select
@@ -37,7 +37,7 @@ async def create_dataset(req: DatasetCreate, db: DbSession, _user: OperatorUser)
     ds = LightningDataset(
         name=req.name,
         description=req.description,
-        agent_id=PyUUID(req.agent_id) if req.agent_id else None,
+        agent_id=req.agent_id,
         items=[item.model_dump() for item in req.items],
         item_count=len(req.items),
     )
@@ -52,11 +52,11 @@ async def create_dataset(req: DatasetCreate, db: DbSession, _user: OperatorUser)
 
 
 @router.get("/datasets", response_model=List[DatasetResponse])
-async def list_datasets(db: DbSession, agent_id: Optional[str] = None):
+async def list_datasets(db: DbSession, agent_id: Optional[UUID] = None):
     """List training datasets."""
     query = select(LightningDataset).order_by(LightningDataset.created_at.desc())
     if agent_id:
-        query = query.where(LightningDataset.agent_id == PyUUID(agent_id))
+        query = query.where(LightningDataset.agent_id == agent_id)
     result = await db.execute(query)
     datasets = result.scalars().all()
     return [
@@ -69,10 +69,10 @@ async def list_datasets(db: DbSession, agent_id: Optional[str] = None):
 
 
 @router.delete("/datasets/{dataset_id}", status_code=204)
-async def delete_dataset(dataset_id: str, db: DbSession, _user: OperatorUser):
+async def delete_dataset(dataset_id: UUID, db: DbSession, _user: OperatorUser):
     """Delete a training dataset."""
     result = await db.execute(
-        select(LightningDataset).where(LightningDataset.id == PyUUID(dataset_id))
+        select(LightningDataset).where(LightningDataset.id == dataset_id)
     )
     ds = result.scalar_one_or_none()
     if not ds:
@@ -89,7 +89,7 @@ async def _run_training_background(run_id: str):
 
     async with async_session_maker() as db:
         result = await db.execute(
-            select(LightningTrainingRun).where(LightningTrainingRun.id == PyUUID(run_id))
+            select(LightningTrainingRun).where(LightningTrainingRun.id == run_id)
         )
         run = result.scalar_one_or_none()
         if not run:
@@ -165,8 +165,8 @@ async def create_training_run(
 ):
     """Launch a new training run."""
     run = LightningTrainingRun(
-        agent_id=PyUUID(req.agent_id),
-        dataset_id=PyUUID(req.dataset_id),
+        agent_id=req.agent_id,
+        dataset_id=req.dataset_id,
         algorithm=req.algorithm,
         reward_function=req.reward_function.value,
         reward_config=req.reward_config,
@@ -196,11 +196,11 @@ async def create_training_run(
 
 
 @router.get("/training-runs", response_model=List[TrainingRunResponse])
-async def list_training_runs(db: DbSession, agent_id: Optional[str] = None):
+async def list_training_runs(db: DbSession, agent_id: Optional[UUID] = None):
     """List training runs."""
     query = select(LightningTrainingRun).order_by(LightningTrainingRun.created_at.desc())
     if agent_id:
-        query = query.where(LightningTrainingRun.agent_id == PyUUID(agent_id))
+        query = query.where(LightningTrainingRun.agent_id == agent_id)
     result = await db.execute(query)
     runs = result.scalars().all()
     return [
@@ -219,10 +219,10 @@ async def list_training_runs(db: DbSession, agent_id: Optional[str] = None):
 
 
 @router.get("/training-runs/{run_id}", response_model=TrainingRunResponse)
-async def get_training_run(run_id: str, db: DbSession):
+async def get_training_run(run_id: UUID, db: DbSession):
     """Get training run details."""
     result = await db.execute(
-        select(LightningTrainingRun).where(LightningTrainingRun.id == PyUUID(run_id))
+        select(LightningTrainingRun).where(LightningTrainingRun.id == run_id)
     )
     r = result.scalar_one_or_none()
     if not r:
@@ -244,13 +244,13 @@ async def get_training_run(run_id: str, db: DbSession):
 
 @router.patch("/agents/{agent_id}/config")
 async def update_agent_lightning_config(
-    agent_id: str,
+    agent_id: UUID,
     req: LightningConfigUpdate,
     db: DbSession,
     _user: OperatorUser,
 ):
     """Update an agent's lightning_config."""
-    result = await db.execute(select(Agent).where(Agent.id == PyUUID(agent_id)))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")

@@ -7,6 +7,8 @@ Types for training runs, datasets, rewards, and rollout configuration.
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from uuid import UUID
+
 from pydantic import BaseModel
 
 
@@ -36,7 +38,7 @@ class DatasetCreate(BaseModel):
     """Create a training dataset."""
     name: str
     description: Optional[str] = None
-    agent_id: str
+    agent_id: UUID
     items: List[DatasetItemCreate] = []
 
 
@@ -54,8 +56,8 @@ class DatasetResponse(BaseModel):
 
 class TrainingRunCreate(BaseModel):
     """Launch a training run."""
-    agent_id: str
-    dataset_id: str
+    agent_id: UUID
+    dataset_id: UUID
     algorithm: str = "apo"
     reward_function: RewardFunctionType = RewardFunctionType.llm_judge
     reward_config: Dict[str, Any] = {}
