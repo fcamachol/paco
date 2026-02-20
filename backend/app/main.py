@@ -363,6 +363,11 @@ app.include_router(company.router, prefix="/api")
 app.include_router(settings_api.router, prefix="/api")
 app.include_router(ws.router)
 
+# Agent Lightning (conditionally registered)
+if settings.lightning_enabled:
+    from app.api import lightning
+    app.include_router(lightning.router, prefix="/api")
+
 
 # =============================================================================
 # Error Handlers
