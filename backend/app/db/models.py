@@ -1107,6 +1107,71 @@ class CompanyMessage(Base):
     department: Mapped[Optional["CompanyDepartment"]] = relationship()
 
 
+# =============================================================================
+# Agent Lightning Models (RL Training)
+# =============================================================================
+
+
+class LightningDataset(Base):
+    """Training dataset for Agent Lightning optimization."""
+
+    __tablename__ = "lightning_datasets"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    agent_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL")
+    )
+    items: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list)
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    agent: Mapped[Optional["Agent"]] = relationship()
+
+
+class LightningTrainingRun(Base):
+    """Training run record for Agent Lightning."""
+
+    __tablename__ = "lightning_training_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    agent_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL")
+    )
+    dataset_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("lightning_datasets.id", ondelete="SET NULL")
+    )
+    algorithm: Mapped[str] = mapped_column(String(50), default="apo")
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    reward_function: Mapped[str] = mapped_column(String(50), default="llm_judge")
+    reward_config: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    current_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    max_epochs: Mapped[int] = mapped_column(Integer, default=10)
+    best_reward: Mapped[Optional[float]] = mapped_column(Numeric(10, 6))
+    metrics: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    optimized_prompt: Mapped[Optional[str]] = mapped_column(Text)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    agent: Mapped[Optional["Agent"]] = relationship()
+    dataset: Mapped[Optional["LightningDataset"]] = relationship()
+
+
 class GlobalSetting(Base):
     """Global key-value settings, used for API keys and other config persisted via UI."""
 
