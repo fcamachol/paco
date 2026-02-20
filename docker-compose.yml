@@ -78,6 +78,12 @@ services:
       ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-03f241422af14fd11e52edf9794089cb4a4bdb8f873fc1eb1e3a0ceea92dd0c2}
       TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY:-false}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/public/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # PACO Backend - FastAPI Control Plane API
   paco-backend:
@@ -101,6 +107,12 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3006,http://localhost:3001}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # PACO Worker - Redis queue background task processor
   paco-worker:
@@ -123,6 +135,12 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: http://langfuse:3000
     command: ["python", "-m", "app.services.queue.worker"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import redis; r = redis.from_url(\"redis://redis:6379/1\"); r.ping()'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   # PACO Frontend - Next.js Control Plane UI
   paco-frontend:
@@ -139,6 +157,12 @@ services:
       NEXT_PUBLIC_LANGFUSE_URL: ${LANGFUSE_URL:-http://localhost:3001}
       NEXTAUTH_URL: ${PACO_URL:-http://localhost:3006}
       NEXTAUTH_SECRET: ${PACO_NEXTAUTH_SECRET:-your-nextauth-secret-change-me}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   postgres_data:
