@@ -54,6 +54,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ onClose }) => 
       topP: (config as any).topP,
       topK: (config as any).topK,
       stopSequences: (config as any).stopSequences || [],
+      envVars: (config as any).envVars || {},
     };
   }, [isAgent, component]);
 
@@ -124,6 +125,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ onClose }) => 
         topP: values.topP,
         topK: values.topK,
         stopSequences: values.stopSequences,
+        envVars: values.envVars,
       };
 
       // Create updated component

@@ -73,6 +73,7 @@ export function usePlayground() {
     message: string,
     agentConfig: any,
     toolsConfig: any[] = [],
+    agentId?: string,
   ) => {
     setIsRunning(true);
     const runSteps: StepEvent[] = [];
@@ -96,6 +97,7 @@ export function usePlayground() {
           agent_config: agentConfig,
           tools_config: toolsConfig,
           conversation_history: conversationHistory,
+          agent_id: agentId,
         }),
         signal: controller.signal,
       });

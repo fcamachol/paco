@@ -125,7 +125,7 @@ export default function AgentDetailPage() {
         display_name: editDisplayName || undefined,
         description: editDescription || undefined,
         config_yaml: editYaml || undefined,
-        env_vars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined,
+        env_vars: envVarsObj,
       });
     },
     onSuccess: () => {

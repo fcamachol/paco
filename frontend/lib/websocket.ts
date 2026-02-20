@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./auth";
 
-const WS_BASE_URL =
-  process.env.NEXT_PUBLIC_WS_URL ||
-  (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
-    .replace(/^http/, "ws");
+function getWsBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL.replace(/^http/, "ws");
+  // Derive from current page origin so the browser connects to the same host
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}`;
+  }
+  return "";
+}
 
 const MAX_RECONNECT_DELAY = 30000;
 const INITIAL_RECONNECT_DELAY = 1000;
@@ -37,7 +43,7 @@ export function useWebSocket<T = any>(channel: string): UseWebSocketReturn<T> {
       wsRef.current = null;
     }
 
-    const url = `${WS_BASE_URL}/${channel}?token=${encodeURIComponent(token)}`;
+    const url = `${getWsBaseUrl()}/${channel}?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 

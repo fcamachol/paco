@@ -168,11 +168,19 @@ export default function AgentPlaygroundPage() {
   const isLoading = agentLoading || toolsLoading;
 
   // Filter tools to only those allowed by this agent
+  // allowed_tools uses MCP format: "mcp__server-name__tool-name"
+  // so we extract the raw tool name from the end of each entry
   const agentTools = useMemo(() => {
     if (!agent || !allTools) return [];
-    const allowedSet = new Set(agent.allowed_tools || []);
-    if (allowedSet.size === 0) return [];
-    return allTools.filter((t) => allowedSet.has(t.name));
+    const allowed = agent.allowed_tools || [];
+    if (allowed.length === 0) return [];
+    const allowedNames = new Set(
+      allowed.map((entry) => {
+        const parts = entry.split("__");
+        return parts.length >= 3 ? parts.slice(2).join("__") : entry;
+      })
+    );
+    return allTools.filter((t) => allowedNames.has(t.name));
   }, [agent, allTools]);
 
   // Build configs for the playground API
@@ -392,10 +400,10 @@ export default function AgentPlaygroundPage() {
   const handleSend = useCallback(
     (message: string) => {
       if (agentConfig) {
-        runAgent(message, agentConfig, toolsConfig);
+        runAgent(message, agentConfig, toolsConfig, id);
       }
     },
-    [runAgent, agentConfig, toolsConfig]
+    [runAgent, agentConfig, toolsConfig, id]
   );
 
   if (isLoading) {
