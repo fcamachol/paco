@@ -5,7 +5,7 @@ company_schedules, company_tasks, and company_work_logs tables
 for the Company infrastructure type (agent employees with heartbeat).
 
 Revision ID: 005_create_company_tables
-Revises: 004_agent_tools_uuid_migration
+Revises: 004_agent_tools_uuid
 Create Date: 2026-02-13
 """
 
@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 # revision identifiers, used by Alembic.
 revision = "005_create_company_tables"
-down_revision = "004_agent_tools_uuid_migration"
+down_revision = "004_agent_tools_uuid"
 branch_labels = None
 depends_on = None
 
