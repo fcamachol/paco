@@ -125,6 +125,114 @@ async def _resolve_api_key(agent_id: Optional[str] = None) -> str:
     return os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
 
 
+async def _load_agent_skills(agent_id: Optional[str]) -> List[str]:
+    """Load enabled skill bodies from the filesystem for an agent."""
+    if not agent_id:
+        return []
+    try:
+        from app.db.session import async_session_maker
+        from app.db.models import Agent, AgentSkill
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.services.skill_filesystem import SkillFilesystemService
+
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(Agent)
+                .where(Agent.id == agent_id)
+                .options(selectinload(Agent.agent_skills).selectinload(AgentSkill.skill))
+            )
+            agent = result.scalar_one_or_none()
+            if not agent:
+                return []
+
+            fs = SkillFilesystemService()
+            skill_bodies = []
+            for ask in agent.agent_skills:
+                if not ask.is_enabled:
+                    continue
+                try:
+                    fs_data = fs.read_skill_md(ask.skill.code)
+                    body = fs_data.get("body", "").strip()
+                    if body:
+                        skill_name = fs_data.get("name", ask.skill.code)
+                        skill_bodies.append(f"## Skill: {skill_name}\n\n{body}")
+                except FileNotFoundError:
+                    pass
+            return skill_bodies
+    except Exception:
+        return []
+
+
+async def _call_mcp_tool(tool_name: str, tool_input: Dict[str, Any], agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Try to execute a tool via its MCP server using JSON-RPC over HTTP.
+
+    Returns the tool result dict, or None if the tool can't be reached.
+    """
+    if not agent_id:
+        return None
+    try:
+        from app.db.session import async_session_maker
+        from app.db.models import Agent, AgentTool, Tool as ToolModel, McpServer
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(Agent)
+                .where(Agent.id == agent_id)
+                .options(
+                    selectinload(Agent.agent_tools)
+                    .selectinload(AgentTool.tool)
+                    .selectinload(ToolModel.mcp_server)
+                )
+            )
+            agent = result.scalar_one_or_none()
+            if not agent:
+                return None
+
+            # Find the tool and its MCP server
+            mcp_server = None
+            for at in agent.agent_tools:
+                if at.tool.name == tool_name and at.tool.mcp_server:
+                    mcp_server = at.tool.mcp_server
+                    break
+
+            if not mcp_server or not mcp_server.url:
+                return None
+
+            # Call tool via MCP JSON-RPC over HTTP
+            server_url = mcp_server.url.rstrip("/")
+            jsonrpc_payload = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": tool_input,
+                },
+                "id": str(uuid.uuid4()),
+            }
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    server_url,
+                    json=jsonrpc_payload,
+                    headers={"content-type": "application/json"},
+                )
+                if resp.status_code == 200:
+                    rpc_result = resp.json()
+                    if "result" in rpc_result:
+                        content = rpc_result["result"].get("content", [])
+                        # Extract text from MCP content blocks
+                        texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+                        return {"result": "\n".join(texts) if texts else str(rpc_result["result"])}
+                    elif "error" in rpc_result:
+                        return {"error": rpc_result["error"].get("message", "MCP error")}
+    except Exception as e:
+        return {"error": f"MCP call failed: {str(e)}"}
+    return None
+
+
 # =============================================================================
 # Execution Persistence
 # =============================================================================
@@ -220,15 +328,18 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
     """
     Execute a single agent with the provided config and stream step events.
 
-    This simulates the agent execution pipeline:
+    Supports full agentic loop:
     1. agent_start - Agent begins processing
-    2. tool_call - If tools are configured, simulate tool invocations
-    3. tool_result - Results from tool calls
+    2. tool_call + tool_result - Execute tools via MCP servers
+    3. Follow-up API calls until Claude produces a text response
     4. response - Final agent response
     """
     start_time = time.time()
     agent_name = request.agent_config.get("name", request.agent_config.get("label", "Agent"))
     model = request.agent_config.get("model", request.agent_config.get("config", {}).get("model_client", {}).get("config", {}).get("model", "claude-sonnet-4-5-20250929"))
+    tool_calls_data: List[Dict[str, Any]] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     # 1. Emit agent_start
     yield format_sse(make_step(
@@ -251,6 +362,12 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             or request.agent_config.get("config", {}).get("system_message", "")
             or "You are a helpful assistant."
         )
+
+        # Load and inject skill prompts into the system prompt
+        skill_bodies = await _load_agent_skills(request.agent_id)
+        if skill_bodies:
+            skills_section = "\n\n# Skills\n\n" + "\n\n".join(skill_bodies)
+            system_prompt = system_prompt + skills_section
 
         # Extract tools from config
         tools_payload = []
@@ -285,80 +402,130 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
         if tools_payload:
             api_body["tools"] = tools_payload
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            api_response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json=api_body,
-            )
+        # Agentic loop: keep calling Claude until we get a text response (max 10 iterations)
+        max_tool_rounds = 10
+        api_result = None
 
-            if api_response.status_code != 200:
-                error_detail = api_response.text
+        for _round in range(max_tool_rounds):
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                api_response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json=api_body,
+                )
+
+                if api_response.status_code != 200:
+                    error_detail = api_response.text
+                    yield format_sse(make_step(
+                        "error",
+                        agent_id=agent_name,
+                        data={"error": f"Claude API error ({api_response.status_code}): {error_detail}"},
+                    ))
+                    return
+
+                api_result = api_response.json()
+
+            usage = api_result.get("usage", {})
+            total_input_tokens += usage.get("input_tokens", 0)
+            total_output_tokens += usage.get("output_tokens", 0)
+
+            # Process response content blocks
+            response_text = ""
+            tool_uses = []
+
+            for block in api_result.get("content", []):
+                if block["type"] == "text":
+                    response_text += block["text"]
+                elif block["type"] == "tool_use":
+                    tool_uses.append(block)
+
+            # If no tool calls, we're done
+            if not tool_uses:
+                break
+
+            # Execute tool calls and collect results
+            tool_results_for_api = []
+            for tool_use in tool_uses:
+                tool_start = time.time()
                 yield format_sse(make_step(
-                    "error",
+                    "tool_call",
                     agent_id=agent_name,
-                    data={"error": f"Claude API error ({api_response.status_code}): {error_detail}"},
+                    tool_name=tool_use["name"],
+                    data={"input": tool_use.get("input", {}), "tool_use_id": tool_use["id"]},
                 ))
-                return
 
-            result = api_response.json()
+                # Try to execute tool via MCP server
+                tool_output = await _call_mcp_tool(
+                    tool_use["name"], tool_use.get("input", {}), request.agent_id
+                )
+                if tool_output is None:
+                    tool_output = {"note": f"Tool '{tool_use['name']}' is not reachable via MCP in playground. Configure the MCP server URL to enable execution."}
 
-        # Process response content blocks
-        response_text = ""
-        tool_uses = []
+                tool_duration = (time.time() - tool_start) * 1000
+                yield format_sse(make_step(
+                    "tool_result",
+                    agent_id=agent_name,
+                    tool_name=tool_use["name"],
+                    data={"output": tool_output, "tool_use_id": tool_use["id"]},
+                    duration_ms=tool_duration,
+                ))
 
-        for block in result.get("content", []):
-            if block["type"] == "text":
-                response_text += block["text"]
-            elif block["type"] == "tool_use":
-                tool_uses.append(block)
+                tool_calls_data.append({
+                    "tool_name": tool_use["name"],
+                    "input": tool_use.get("input", {}),
+                    "output": tool_output,
+                    "latency_ms": int(tool_duration),
+                    "success": "error" not in tool_output,
+                })
 
-        # 2. Emit tool calls if any
-        for tool_use in tool_uses:
-            tool_start = time.time()
-            yield format_sse(make_step(
-                "tool_call",
-                agent_id=agent_name,
-                tool_name=tool_use["name"],
-                data={"input": tool_use.get("input", {}), "tool_use_id": tool_use["id"]},
-            ))
-
-            # Small delay for visual effect
-            await asyncio.sleep(0.3)
-
-            # 3. Emit tool result (simulated - we don't actually execute tools in sandbox)
-            tool_duration = (time.time() - tool_start) * 1000
-            yield format_sse(make_step(
-                "tool_result",
-                agent_id=agent_name,
-                tool_name=tool_use["name"],
-                data={
-                    "output": {"note": "Tool execution simulated in sandbox mode"},
+                tool_results_for_api.append({
+                    "type": "tool_result",
                     "tool_use_id": tool_use["id"],
-                },
-                duration_ms=tool_duration,
-            ))
+                    "content": json.dumps(tool_output, ensure_ascii=False, default=str),
+                })
 
-        # If there were tool calls but no text response, note it
-        if tool_uses and not response_text:
-            response_text = "(Agent requested tool calls — in production, tools would execute and the agent would continue)"
+            # Build follow-up request with tool results for next iteration
+            messages = api_body["messages"] + [
+                {"role": "assistant", "content": api_result["content"]},
+                {"role": "user", "content": tool_results_for_api},
+            ]
+            api_body = {
+                "model": model,
+                "max_tokens": 4096,
+                "system": system_prompt,
+                "messages": messages,
+            }
+            if tools_payload:
+                api_body["tools"] = tools_payload
+
+            # Reset response_text for next round
+            response_text = ""
+
+        # Extract final response text from last API result
+        if api_result:
+            response_text = ""
+            for block in api_result.get("content", []):
+                if block["type"] == "text":
+                    response_text += block["text"]
+
+        if not response_text:
+            response_text = "(No text response generated)"
 
         # 4. Emit response
         total_duration = (time.time() - start_time) * 1000
-        usage = result.get("usage", {})
         yield format_sse(make_step(
             "response",
             agent_id=agent_name,
             data={
                 "text": response_text,
-                "input_tokens": usage.get("input_tokens", 0),
-                "output_tokens": usage.get("output_tokens", 0),
-                "model": result.get("model", model),
-                "stop_reason": result.get("stop_reason", ""),
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "model": api_result.get("model", model) if api_result else model,
+                "stop_reason": api_result.get("stop_reason", "") if api_result else "",
             },
             duration_ms=total_duration,
         ))
@@ -366,14 +533,15 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
         # Persist playground execution
         await _persist_execution(
             agent_name=agent_name,
-            model=result.get("model", model),
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
+            model=api_result.get("model", model) if api_result else model,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
             duration_ms=total_duration,
             status="success",
             playground_type="agent",
             message=request.message,
             start_timestamp=start_time,
+            tool_calls_data=tool_calls_data or None,
         )
 
     except Exception as e:
@@ -385,14 +553,15 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
         await _persist_execution(
             agent_name=agent_name,
             model=model,
-            input_tokens=0,
-            output_tokens=0,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
             duration_ms=(time.time() - start_time) * 1000,
             status="error",
             error_message=str(e),
             playground_type="agent",
             message=request.message,
             start_timestamp=start_time,
+            tool_calls_data=tool_calls_data or None,
         )
 
 
