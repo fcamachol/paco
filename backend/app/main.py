@@ -368,6 +368,12 @@ if settings.lightning_enabled:
     from app.api import lightning
     app.include_router(lightning.router, prefix="/api")
 
+# A2A Protocol (conditionally registered)
+if settings.a2a_enabled:
+    from app.api import a2a
+    app.include_router(a2a.router)
+    app.include_router(a2a.api_router, prefix="/api")
+
 
 # =============================================================================
 # Error Handlers
