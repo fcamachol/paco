@@ -1131,6 +1131,57 @@ class ApiClient {
     });
   }
 
+  // Builder endpoints
+  async getBuilderArtifacts(sessionId: string) {
+    return this.request<BuilderArtifacts>(`/api/builder/sessions/${sessionId}/artifacts`);
+  }
+
+}
+
+// Builder types
+export interface BuilderArtifactAgent {
+  name?: string;
+  display_name?: string;
+  description?: string;
+  model?: string;
+  status?: string;
+  system_prompt?: string;
+}
+
+export interface BuilderArtifactTool {
+  id: string;
+  name: string;
+  description?: string;
+  input_schema?: Record<string, any>;
+}
+
+export interface BuilderArtifactSkill {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+}
+
+export interface BuilderProcessStep {
+  step?: number;
+  title: string;
+  description: string;
+  action?: string;
+}
+
+export interface BuilderArtifacts {
+  agent?: BuilderArtifactAgent;
+  tools: BuilderArtifactTool[];
+  skills: BuilderArtifactSkill[];
+  process_flow?: BuilderProcessStep[];
+  knowledge_base?: any;
+}
+
+export interface BuilderSession {
+  id: string;
+  status?: string;
+  agent_id?: string;
+  created_at?: string;
 }
 
 // Types
