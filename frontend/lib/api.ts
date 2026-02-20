@@ -411,8 +411,30 @@ class ApiClient {
   // Settings endpoints
   async getGlobalApiKeys() {
     return this.request<{
-      keys: Array<{ provider: string; configured: boolean; env_var: string }>;
+      keys: Array<{
+        provider: string;
+        configured: boolean;
+        env_var: string;
+        source: "database" | "environment" | "none";
+      }>;
     }>("/api/settings/api-keys");
+  }
+
+  async saveGlobalApiKey(provider: string, value: string) {
+    return this.request<{ status: string; provider: string; source: string }>(
+      `/api/settings/api-keys/${encodeURIComponent(provider)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ value }),
+      }
+    );
+  }
+
+  async deleteGlobalApiKey(provider: string) {
+    return this.request<{ status: string; provider: string }>(
+      `/api/settings/api-keys/${encodeURIComponent(provider)}`,
+      { method: "DELETE" }
+    );
   }
 
   // Health check

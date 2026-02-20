@@ -1,10 +1,168 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, CheckCircle, XCircle, Key } from "lucide-react";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  ExternalLink,
+  CheckCircle,
+  XCircle,
+  Key,
+  Plus,
+  Trash2,
+  RefreshCw,
+  Database,
+  Server,
+} from "lucide-react";
 import { Header } from "@/components/ui/Header";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
+
+function ApiKeyRow({
+  provider,
+  envVar,
+  configured,
+  source,
+}: {
+  provider: string;
+  envVar: string;
+  configured: boolean;
+  source: "database" | "environment" | "none";
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [keyValue, setKeyValue] = useState("");
+
+  const saveMutation = useMutation({
+    mutationFn: (value: string) => api.saveGlobalApiKey(provider, value),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings", "api-keys"] });
+      setEditing(false);
+      setKeyValue("");
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteGlobalApiKey(provider),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings", "api-keys"] });
+    },
+  });
+
+  const handleSave = () => {
+    if (keyValue.trim()) {
+      saveMutation.mutate(keyValue.trim());
+    }
+  };
+
+  const handleCancel = () => {
+    setEditing(false);
+    setKeyValue("");
+    saveMutation.reset();
+  };
+
+  return (
+    <div className="py-3 border-b border-border last:border-b-0">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="font-medium text-foreground">{provider}</p>
+          <p className="text-xs text-foreground-muted font-mono">{envVar}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Status badge */}
+          {source === "database" ? (
+            <>
+              <Database className="w-3.5 h-3.5 text-success" />
+              <span className="text-sm text-success">Stored</span>
+            </>
+          ) : source === "environment" ? (
+            <>
+              <Server className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-sm text-blue-400">Environment</span>
+            </>
+          ) : (
+            <>
+              <XCircle className="w-3.5 h-3.5 text-foreground-muted" />
+              <span className="text-sm text-foreground-muted">Not set</span>
+            </>
+          )}
+
+          {/* Action buttons */}
+          {!editing && (
+            <div className="flex items-center gap-1 ml-2">
+              <button
+                onClick={() => setEditing(true)}
+                className="btn btn-sm btn-ghost text-xs"
+              >
+                {configured ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Replace
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-3 h-3 mr-1" />
+                    Add
+                  </>
+                )}
+              </button>
+              {source === "database" && (
+                <button
+                  onClick={() => deleteMutation.mutate()}
+                  disabled={deleteMutation.isPending}
+                  className="btn btn-sm btn-ghost text-error text-xs"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Inline edit form */}
+      {editing && (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="password"
+            value={keyValue}
+            onChange={(e) => setKeyValue(e.target.value)}
+            placeholder={`Enter ${provider} API key...`}
+            className="input flex-1 text-sm"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSave();
+              if (e.key === "Escape") handleCancel();
+            }}
+          />
+          <button
+            onClick={handleSave}
+            disabled={!keyValue.trim() || saveMutation.isPending}
+            className="btn btn-sm btn-primary"
+          >
+            {saveMutation.isPending ? "Saving..." : "Save"}
+          </button>
+          <button
+            onClick={handleCancel}
+            className="btn btn-sm btn-ghost"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Error messages */}
+      {saveMutation.isError && (
+        <p className="text-xs text-error mt-1">
+          Failed to save: {(saveMutation.error as any)?.detail || "Unknown error"}
+        </p>
+      )}
+      {deleteMutation.isError && (
+        <p className="text-xs text-error mt-1">
+          Failed to delete: {(deleteMutation.error as any)?.detail || "Unknown error"}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   // Fetch health status
@@ -20,7 +178,7 @@ export default function SettingsPage() {
   });
 
   const langfuseUrl =
-    process.env.NEXT_PUBLIC_LANGFUSE_URL || "http://localhost:3001";
+    process.env.NEXT_PUBLIC_LANGFUSE_URL || "";
 
   return (
     <div>
@@ -96,7 +254,8 @@ export default function SettingsPage() {
           </div>
           <div className="card-content">
             <p className="text-sm text-foreground-muted mb-4">
-              Default API keys configured via environment variables. Individual
+              Manage API keys for LLM providers. Keys stored here are the primary
+              source — environment variables serve as a legacy fallback. Individual
               agents can override these with per-agent credentials.
             </p>
             {apiKeysLoading ? (
@@ -104,38 +263,15 @@ export default function SettingsPage() {
                 <div className="animate-spin w-6 h-6 border-2 border-coral-500 border-t-transparent rounded-full" />
               </div>
             ) : (
-              <div className="space-y-3">
+              <div>
                 {apiKeys?.keys.map((key) => (
-                  <div
+                  <ApiKeyRow
                     key={key.env_var}
-                    className="flex items-center justify-between py-2 border-b border-border last:border-b-0"
-                  >
-                    <div>
-                      <p className="font-medium text-foreground">
-                        {key.provider}
-                      </p>
-                      <p className="text-xs text-foreground-muted font-mono">
-                        {key.env_var}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {key.configured ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-success" />
-                          <span className="text-sm text-success">
-                            Configured
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="w-4 h-4 text-foreground-muted" />
-                          <span className="text-sm text-foreground-muted">
-                            Not set
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
+                    provider={key.provider}
+                    envVar={key.env_var}
+                    configured={key.configured}
+                    source={key.source}
+                  />
                 ))}
               </div>
             )}
@@ -152,7 +288,7 @@ export default function SettingsPage() {
               <label className="label block mb-1">API URL</label>
               <input
                 type="text"
-                value={process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}
+                value={process.env.NEXT_PUBLIC_API_URL || "(relative)"}
                 readOnly
                 className="input bg-background-tertiary"
               />
