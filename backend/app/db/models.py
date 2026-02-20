@@ -205,6 +205,8 @@ class Agent(Base):
     sdk_config: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     env_vars: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
     lightning_config: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    a2a_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    a2a_skills: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list)
     runtime: Mapped[str] = mapped_column(String(100), default="typescript-claude-sdk")
 
     created_at: Mapped[datetime] = mapped_column(
@@ -1221,6 +1223,67 @@ class Process(Base):
     source_files: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     created_by: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+# =============================================================================
+# A2A Protocol Models
+# =============================================================================
+
+
+class A2ATask(Base):
+    """A2A protocol task — tracks inbound and outbound agent-to-agent tasks."""
+
+    __tablename__ = "a2a_tasks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    a2a_task_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    direction: Mapped[str] = mapped_column(String(20), nullable=False)
+    agent_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(50), default="submitted")
+    input_message: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    artifacts: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list)
+    history: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list)
+    remote_agent_url: Mapped[Optional[str]] = mapped_column(String(1000))
+    remote_agent_name: Mapped[Optional[str]] = mapped_column(String(255))
+    hive_task_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("hive_tasks.id", ondelete="SET NULL")
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    extra_metadata: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    agent: Mapped[Optional["Agent"]] = relationship()
+
+
+class ExternalA2AAgent(Base):
+    """Registry of external A2A agents for outbound communication."""
+
+    __tablename__ = "external_a2a_agents"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(255))
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    agent_card: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    last_discovered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

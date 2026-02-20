@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     lightning_store_path: str = "./lightning_store"
     lightning_default_algorithm: str = "apo"
 
+    # A2A Protocol
+    a2a_enabled: bool = False
+    a2a_require_auth: bool = True
+    a2a_base_url: str = ""
+    a2a_default_version: str = "0.3"
+
     # Infrastructure Code Generation
     generated_projects_path: str = "./generated_projects"
 
