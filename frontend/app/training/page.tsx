@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Zap,
@@ -468,9 +468,8 @@ function TrainingRunsTab({
                 </tr>
               ) : (
                 runs.map((run) => (
-                  <>
+                  <Fragment key={run.id}>
                     <tr
-                      key={run.id}
                       className="border-b border-border hover:bg-background-secondary transition-colors cursor-pointer"
                       onClick={() => setExpandedRun(expandedRun === run.id ? null : run.id)}
                     >
@@ -510,7 +509,7 @@ function TrainingRunsTab({
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))
               )}
             </tbody>
