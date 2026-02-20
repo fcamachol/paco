@@ -10,6 +10,7 @@ import { Header } from "@/components/ui/Header";
 import { api, Skill, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useIsOperator } from "@/lib/auth";
+import { ToolSelector } from "@/components/skills/tool-selector";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -30,7 +31,7 @@ export default function SkillEditPage() {
   // Form state
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [allowedToolsText, setAllowedToolsText] = useState("");
+  const [allowedTools, setAllowedTools] = useState<string[]>([]);
   const [body, setBody] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ export default function SkillEditPage() {
     if (skill) {
       setName(skill.name);
       setDescription(skill.description ?? "");
-      setAllowedToolsText(skill.allowed_tools.join(", "));
+      setAllowedTools(skill.allowed_tools);
       setBody(skill.body ?? "");
       setIsActive(skill.is_active);
       setHasChanges(false);
@@ -105,15 +106,10 @@ export default function SkillEditPage() {
 
   function handleSave() {
     setError(null);
-    const parsedTools = allowedToolsText
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
     saveMutation.mutate({
       name: name.trim(),
       description: description.trim(),
-      allowed_tools: parsedTools,
+      allowed_tools: allowedTools,
       body,
       is_active: isActive,
     });
@@ -302,18 +298,15 @@ export default function SkillEditPage() {
                 <Wrench className="w-3.5 h-3.5 inline mr-1" />
                 Allowed Tools
               </label>
-              <input
-                type="text"
-                value={allowedToolsText}
-                onChange={(e) => {
-                  setAllowedToolsText(e.target.value);
+              <ToolSelector
+                value={allowedTools}
+                onChange={(tools) => {
+                  setAllowedTools(tools);
                   markChanged();
                 }}
-                placeholder="tool1, tool2, tool3"
-                className="input w-full"
               />
               <p className="text-xs text-foreground-muted mt-1">
-                Comma-separated list of tool names this skill is allowed to use
+                Select tools this skill is allowed to use
               </p>
             </div>
           </div>

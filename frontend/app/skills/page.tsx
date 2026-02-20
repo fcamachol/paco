@@ -28,6 +28,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useIsAdmin, useIsOperator } from "@/lib/auth";
+import { ToolSelector } from "@/components/skills/tool-selector";
 
 type StatusFilter = "all" | "active" | "inactive";
 
@@ -358,8 +359,8 @@ function SkillDetailModal({
   // Editable fields
   const [name, setName] = useState(initialSkill.name);
   const [description, setDescription] = useState(initialSkill.description ?? "");
-  const [allowedToolsText, setAllowedToolsText] = useState(
-    initialSkill.allowed_tools.join(", ")
+  const [allowedTools, setAllowedTools] = useState<string[]>(
+    initialSkill.allowed_tools
   );
   const [body, setBody] = useState(initialSkill.body ?? "");
   const [isActive, setIsActive] = useState(initialSkill.is_active);
@@ -392,15 +393,10 @@ function SkillDetailModal({
 
   function handleSave() {
     setError(null);
-    const parsedTools = allowedToolsText
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
     updateMutation.mutate({
       name: name.trim() || undefined,
       description: description || undefined,
-      allowed_tools: parsedTools,
+      allowed_tools: allowedTools,
       body: body || undefined,
       is_active: isActive,
     });
@@ -409,7 +405,7 @@ function SkillDetailModal({
   function handleCancelEdit() {
     setName(skill.name);
     setDescription(skill.description ?? "");
-    setAllowedToolsText(skill.allowed_tools.join(", "));
+    setAllowedTools(skill.allowed_tools);
     setBody(skill.body ?? "");
     setIsActive(skill.is_active);
     setError(null);
@@ -507,16 +503,10 @@ function SkillDetailModal({
               Allowed Tools
             </label>
             {isEditing ? (
-              <>
-                <input
-                  type="text"
-                  value={allowedToolsText}
-                  onChange={(e) => setAllowedToolsText(e.target.value)}
-                  placeholder="tool1, tool2, ..."
-                  className="input w-full"
-                />
-                <p className="text-xs text-foreground-muted mt-1">Comma-separated tool names</p>
-              </>
+              <ToolSelector
+                value={allowedTools}
+                onChange={setAllowedTools}
+              />
             ) : skill.allowed_tools.length > 0 ? (
               <div className="flex flex-wrap gap-1">
                 {skill.allowed_tools.map((t) => (
