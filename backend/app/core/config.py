@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     lightning_store_path: str = "./lightning_store"
     lightning_default_algorithm: str = "apo"
 
+    # Webhooks
+    webhook_max_attempts: int = 5
+    webhook_delivery_timeout: float = 10.0
+
     # A2A Protocol
     a2a_enabled: bool = False
     a2a_require_auth: bool = True

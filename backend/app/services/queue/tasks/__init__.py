@@ -14,8 +14,10 @@ def register_all(dispatcher: TaskDispatcher) -> None:
         agent_lifecycle,
         company_message_delivery,
         heartbeat_trigger,
+        inbound_webhook_process,
         infra_health_check,
         tool_sync,
+        webhook_delivery,
     )
 
     agent_config_reload.register(dispatcher)
@@ -24,3 +26,5 @@ def register_all(dispatcher: TaskDispatcher) -> None:
     infra_health_check.register(dispatcher)
     agent_lifecycle.register(dispatcher)
     company_message_delivery.register(dispatcher)
+    webhook_delivery.register(dispatcher)
+    inbound_webhook_process.register(dispatcher)

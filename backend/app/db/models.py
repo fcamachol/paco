@@ -1290,3 +1290,134 @@ class ExternalA2AAgent(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+# =============================================================================
+# Webhook Models (Outbound + Inbound)
+# =============================================================================
+
+
+class Webhook(Base):
+    """Outbound webhook subscription."""
+
+    __tablename__ = "webhooks"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_webhook_user_name"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    secret: Mapped[Optional[str]] = mapped_column(Text)
+    events: Mapped[List[str]] = mapped_column(JSONB, default=list)
+    agent_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE")
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    deliveries: Mapped[List["WebhookDelivery"]] = relationship(
+        back_populates="webhook", cascade="all, delete-orphan"
+    )
+
+
+class WebhookDelivery(Base):
+    """Delivery attempt for an outbound webhook event."""
+
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    webhook_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("webhooks.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    response_status_code: Mapped[Optional[int]] = mapped_column(Integer)
+    response_body: Mapped[Optional[str]] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    webhook: Mapped["Webhook"] = relationship(back_populates="deliveries")
+
+
+class InboundWebhook(Base):
+    """Inbound webhook endpoint for receiving external events."""
+
+    __tablename__ = "inbound_webhooks"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    agent_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    source: Mapped[Optional[str]] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    processing_mode: Mapped[str] = mapped_column(String(20), default="async")
+    secret: Mapped[Optional[str]] = mapped_column(String(255))
+    signature_header: Mapped[Optional[str]] = mapped_column(String(100))
+    prompt_template: Mapped[Optional[str]] = mapped_column(Text)
+    total_events: Mapped[int] = mapped_column(Integer, default=0)
+    last_event_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    agent: Mapped["Agent"] = relationship()
+    events: Mapped[List["InboundWebhookEvent"]] = relationship(
+        back_populates="webhook", cascade="all, delete-orphan"
+    )
+
+
+class InboundWebhookEvent(Base):
+    """Individual event received on an inbound webhook."""
+
+    __tablename__ = "inbound_webhook_events"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=func.uuid_generate_v4()
+    )
+    webhook_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("inbound_webhooks.id", ondelete="CASCADE"), nullable=False
+    )
+    source_ip: Mapped[Optional[str]] = mapped_column(String(45))
+    headers: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    prompt_sent: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(50), default="received")
+    agent_response: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    processing_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    signature_valid: Mapped[Optional[bool]] = mapped_column(Boolean)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    webhook: Mapped["InboundWebhook"] = relationship(back_populates="events")

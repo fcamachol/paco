@@ -1,10 +1,15 @@
 """
 PACO Secrets Utility
 
-Masking helpers for sensitive environment variable values.
+Masking helpers for sensitive environment variable values,
+plus Fernet symmetric encryption for webhook secrets.
 """
 
+import base64
+import hashlib
 from typing import Any, Dict
+
+from cryptography.fernet import Fernet
 
 SENSITIVE_KEY_PATTERNS = {"API_KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL"}
 
@@ -31,3 +36,28 @@ def mask_env_vars(env_vars: Dict[str, Any]) -> Dict[str, Any]:
         else:
             masked[key] = value
     return masked
+
+
+# =============================================================================
+# Fernet Encryption for Webhook Secrets
+# =============================================================================
+
+
+def _get_fernet() -> Fernet:
+    """Derive a Fernet key from settings.secret_key."""
+    from app.core.config import settings
+    key_bytes = hashlib.sha256(settings.secret_key.encode()).digest()
+    fernet_key = base64.urlsafe_b64encode(key_bytes)
+    return Fernet(fernet_key)
+
+
+def encrypt_webhook_secret(plaintext: str) -> str:
+    """Encrypt a webhook signing secret using Fernet symmetric encryption."""
+    f = _get_fernet()
+    return f.encrypt(plaintext.encode()).decode()
+
+
+def decrypt_webhook_secret(ciphertext: str) -> str:
+    """Decrypt a webhook signing secret."""
+    f = _get_fernet()
+    return f.decrypt(ciphertext.encode()).decode()
