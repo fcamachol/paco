@@ -27,16 +27,18 @@ from app.services.langfuse_client import langfuse_client
 
 
 async def _ensure_schema_columns():
-    """Schema migrations are now handled by Alembic.
-
-    See alembic/versions/ for versioned migration files:
-      - 002_add_schema_columns.py
-      - 003_create_hive_tables.py
-      - 004_agent_tools_uuid_migration.py
-
-    Run migrations with:  alembic upgrade head
-    """
-    print("Schema migrations managed by Alembic (run: alembic upgrade head)")
+    """Run Alembic migrations to ensure DB schema is up to date."""
+    import subprocess, os
+    alembic_dir = os.path.join(os.path.dirname(__file__), "..")
+    result = subprocess.run(
+        ["alembic", "upgrade", "head"],
+        cwd=alembic_dir,
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode == 0:
+        print(f"Alembic migrations OK: {result.stdout.strip()}")
+    else:
+        print(f"Alembic migration warning: {result.stderr.strip()}")
 
 
 async def _create_missing_tables():
