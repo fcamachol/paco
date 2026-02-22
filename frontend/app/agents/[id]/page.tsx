@@ -16,6 +16,7 @@ import {
   Wrench,
   Sparkles,
   RefreshCw,
+  Globe,
 } from "lucide-react";
 import Link from "next/link";
 import { Header } from "@/components/ui/Header";
@@ -24,8 +25,9 @@ import { cn, getStatusColor, formatRelativeTime } from "@/lib/utils";
 import { useIsOperator } from "@/lib/auth";
 import { AgentConfigForm } from "@/components/agent-config";
 import type { AgentFormValues } from "@/components/agent-config";
+import { InboundWebhookList, OutboundWebhookList } from "@/components/webhooks";
 
-type TabId = "config" | "tools" | "skills";
+type TabId = "config" | "tools" | "skills" | "webhooks";
 
 export default function AgentDetailPage() {
   const router = useRouter();
@@ -276,6 +278,7 @@ export default function AgentDetailPage() {
     { id: "config", label: "Configuration", icon: <Pencil className="w-3.5 h-3.5" /> },
     { id: "tools", label: `Tools (${agent.tools?.length || 0})`, icon: <Wrench className="w-3.5 h-3.5" /> },
     { id: "skills", label: `Skills (${agent.skills?.length || 0})`, icon: <Sparkles className="w-3.5 h-3.5" /> },
+    { id: "webhooks", label: "Webhooks", icon: <Globe className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -718,6 +721,18 @@ export default function AgentDetailPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Webhooks Tab */}
+        {activeTab === "webhooks" && (
+          <div className="space-y-8">
+            <div className="card p-6">
+              <InboundWebhookList agentId={id} />
+            </div>
+            <div className="card p-6">
+              <OutboundWebhookList agentId={id} />
+            </div>
           </div>
         )}
 

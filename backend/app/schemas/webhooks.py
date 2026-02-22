@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class WebhookEventType(str, Enum):
@@ -51,6 +51,15 @@ class WebhookCreateRequest(BaseModel):
     agent_id: Optional[str] = None  # null = global (all agents)
     description: Optional[str] = None
 
+    @field_validator("events")
+    @classmethod
+    def validate_event_types(cls, v: List[str]) -> List[str]:
+        valid = {e.value for e in WebhookEventType}
+        invalid = [e for e in v if e not in valid]
+        if invalid:
+            raise ValueError(f"Invalid event types: {invalid}. Valid types: {sorted(valid)}")
+        return v
+
 
 class WebhookUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
@@ -60,6 +69,17 @@ class WebhookUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
     description: Optional[str] = None
     rotate_secret: bool = False
+
+    @field_validator("events")
+    @classmethod
+    def validate_event_types(cls, v):
+        if v is None:
+            return v
+        valid = {e.value for e in WebhookEventType}
+        invalid = [e for e in v if e not in valid]
+        if invalid:
+            raise ValueError(f"Invalid event types: {invalid}. Valid types: {sorted(valid)}")
+        return v
 
 
 class WebhookResponse(BaseModel):

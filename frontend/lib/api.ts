@@ -1236,6 +1236,109 @@ class ApiClient {
     );
   }
 
+  // ==========================================================================
+  // Webhook endpoints
+  // ==========================================================================
+
+  // --- Inbound Webhooks ---
+
+  async getAgentInboundWebhooks(agentId: string) {
+    return this.request<InboundWebhook[]>(
+      `/api/agents/${agentId}/webhooks/inbound`
+    );
+  }
+
+  async createInboundWebhook(agentId: string, data: CreateInboundWebhookRequest) {
+    return this.request<InboundWebhookCreated>(
+      `/api/agents/${agentId}/webhooks/inbound`,
+      { method: "POST", body: JSON.stringify(data) }
+    );
+  }
+
+  async updateInboundWebhook(
+    agentId: string,
+    webhookId: string,
+    data: Record<string, any>
+  ) {
+    return this.request<InboundWebhook>(
+      `/api/agents/${agentId}/webhooks/inbound/${webhookId}`,
+      { method: "PUT", body: JSON.stringify(data) }
+    );
+  }
+
+  async deleteInboundWebhook(agentId: string, webhookId: string) {
+    return this.request<void>(
+      `/api/agents/${agentId}/webhooks/inbound/${webhookId}`,
+      { method: "DELETE" }
+    );
+  }
+
+  async regenerateWebhookToken(agentId: string, webhookId: string) {
+    return this.request<InboundWebhook>(
+      `/api/agents/${agentId}/webhooks/inbound/${webhookId}/regenerate-token`,
+      { method: "POST" }
+    );
+  }
+
+  async getWebhookEvents(
+    agentId: string,
+    webhookId: string,
+    page: number = 1,
+    perPage: number = 50
+  ) {
+    return this.request<InboundWebhookEventList>(
+      `/api/agents/${agentId}/webhooks/inbound/${webhookId}/events?page=${page}&per_page=${perPage}`
+    );
+  }
+
+  // --- Outbound Webhooks ---
+
+  async getOutboundWebhooks(agentId?: string) {
+    const params = agentId ? `?agent_id=${agentId}` : "";
+    return this.request<OutboundWebhook[]>(`/api/webhooks${params}`);
+  }
+
+  async createOutboundWebhook(data: CreateOutboundWebhookRequest) {
+    return this.request<OutboundWebhookCreated>("/api/webhooks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateOutboundWebhook(id: string, data: Record<string, any>) {
+    return this.request<OutboundWebhook>(`/api/webhooks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteOutboundWebhook(id: string) {
+    return this.request<void>(`/api/webhooks/${id}`, { method: "DELETE" });
+  }
+
+  async testOutboundWebhook(id: string) {
+    return this.request<WebhookTestResponse>(`/api/webhooks/${id}/test`, {
+      method: "POST",
+    });
+  }
+
+  async getWebhookDeliveries(webhookId: string, page: number = 1, perPage: number = 50) {
+    return this.request<WebhookDeliveryListResponse>(
+      `/api/webhooks/${webhookId}/deliveries?page=${page}&per_page=${perPage}`
+    );
+  }
+
+  async retryWebhookDelivery(webhookId: string, deliveryId: string) {
+    return this.request<WebhookDeliveryItem>(
+      `/api/webhooks/${webhookId}/deliveries/${deliveryId}/retry`,
+      { method: "POST" }
+    );
+  }
+
+  async getWebhookEventTypes() {
+    return this.request<WebhookEventTypeInfo[]>("/api/webhooks/events");
+  }
+
 }
 
 // Builder types
@@ -1728,6 +1831,138 @@ export interface TrainingRun {
   started_at?: string;
   completed_at?: string;
   created_at: string;
+}
+
+// ==========================================================================
+// Webhook types
+// ==========================================================================
+
+export interface InboundWebhook {
+  id: string;
+  agent_id: string;
+  name: string;
+  description: string | null;
+  token: string;
+  url: string;
+  source: string | null;
+  is_active: boolean;
+  processing_mode: string;
+  has_secret: boolean;
+  signature_header: string | null;
+  prompt_template: string | null;
+  total_events: number;
+  last_event_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InboundWebhookCreated extends InboundWebhook {
+  secret: string | null;
+}
+
+export interface CreateInboundWebhookRequest {
+  name: string;
+  description?: string;
+  source?: string;
+  processing_mode?: "async" | "sync";
+  secret?: string;
+  signature_header?: string;
+  prompt_template?: string;
+}
+
+export interface InboundWebhookEvent {
+  id: string;
+  webhook_id: string;
+  source_ip: string | null;
+  headers: Record<string, any>;
+  payload: Record<string, any>;
+  prompt_sent: string | null;
+  status: string;
+  agent_response: Record<string, any> | null;
+  error_message: string | null;
+  processing_ms: number | null;
+  signature_valid: boolean | null;
+  received_at: string;
+  completed_at: string | null;
+}
+
+export interface InboundWebhookEventList {
+  events: InboundWebhookEvent[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface OutboundWebhook {
+  id: string;
+  user_id: string;
+  name: string;
+  url: string;
+  events: string[];
+  agent_id: string | null;
+  is_active: boolean;
+  description: string | null;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutboundWebhookCreated extends OutboundWebhook {
+  secret: string;
+}
+
+export interface CreateOutboundWebhookRequest {
+  name: string;
+  url: string;
+  events: string[];
+  agent_id?: string;
+  description?: string;
+}
+
+export interface UpdateOutboundWebhookRequest {
+  name?: string;
+  url?: string;
+  events?: string[];
+  agent_id?: string | null;
+  is_active?: boolean;
+  description?: string;
+  rotate_secret?: boolean;
+}
+
+export interface WebhookTestResponse {
+  success: boolean;
+  delivery_id: string;
+  status_code: number | null;
+  error: string | null;
+}
+
+export interface WebhookDeliveryItem {
+  id: string;
+  webhook_id: string;
+  event_type: string;
+  payload: Record<string, any>;
+  status: string;
+  response_status_code: number | null;
+  response_body: string | null;
+  attempts: number;
+  max_attempts: number;
+  next_retry_at: string | null;
+  error_message: string | null;
+  created_at: string;
+  delivered_at: string | null;
+}
+
+export interface WebhookDeliveryListResponse {
+  deliveries: WebhookDeliveryItem[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface WebhookEventTypeInfo {
+  event_type: string;
+  description: string;
+  category: string;
 }
 
 // Export singleton instance

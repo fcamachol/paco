@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Header } from "@/components/ui/Header";
 import { api } from "@/lib/api";
+import { OutboundWebhookList } from "@/components/webhooks";
 
 function ApiKeyRow({
   provider,
@@ -303,6 +304,18 @@ export default function SettingsPage() {
                 className="input bg-background-tertiary"
               />
             </div>
+          </div>
+        </div>
+
+        {/* Global Outbound Webhooks */}
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold text-foreground">
+              Global Outbound Webhooks
+            </h2>
+          </div>
+          <div className="card-content">
+            <OutboundWebhookList />
           </div>
         </div>
 

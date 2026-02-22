@@ -374,6 +374,12 @@ if settings.a2a_enabled:
     app.include_router(a2a.router)
     app.include_router(a2a.api_router, prefix="/api")
 
+# Webhooks (outbound + inbound)
+from app.api import webhooks, inbound_webhooks
+app.include_router(webhooks.router, prefix="/api")
+app.include_router(inbound_webhooks.crud_router, prefix="/api/agents/{agent_id}/webhooks/inbound")
+app.include_router(inbound_webhooks.receiver_router, prefix="/api")
+
 
 # =============================================================================
 # Error Handlers
@@ -387,11 +393,7 @@ async def global_exception_handler(request, exc):
     traceback.print_exc()
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": f"Internal server error: {type(exc).__name__}",
-            "type": type(exc).__name__,
-            "message": str(exc),
-        },
+        content={"detail": "Internal server error"},
     )
 
 
