@@ -20,6 +20,8 @@ from app.core.deps import AdminUser, DbSession, OperatorUser
 from app.core.secrets import mask_env_vars
 from app.db.models import Agent, AgentSkill, AgentTool, Skill, Tool
 from app.services.pm2_client import PM2Client
+from app.services.queue.redis_pool import get_queue_redis
+from app.services.queue.core import enqueue_task
 from app.services.sdk_options_builder import SDKOptionsBuilder
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
@@ -438,7 +440,7 @@ async def delete_agent(
 # =============================================================================
 
 
-@router.post("/{agent_id}/start", response_model=AgentStatusResponse)
+@router.post("/{agent_id}/start", response_model=AgentStatusResponse, status_code=202)
 async def start_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentStatusResponse:
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
@@ -447,27 +449,31 @@ async def start_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSt
     if agent.status == "running":
         raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already running")
 
-    pm2 = PM2Client()
+    agent.status = "starting"
+    await db.commit()
+
+    env = dict(agent.env_vars or {})
+    env["PACO_API_URL"] = settings.internal_api_url
+    env["PACO_AGENT_ID"] = str(agent.id)
+
     try:
-        agent.status = "starting"
-        await db.commit()
-        # Inject PACO env vars so the agent can reach the PACO API
-        env = dict(agent.env_vars or {})
-        env["PACO_API_URL"] = settings.internal_api_url
-        env["PACO_AGENT_ID"] = str(agent.id)
-        pm2_status = await pm2.start(agent.pm2_name, env=env)
-        agent.status = "running"
-        agent.last_health_check = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(agent)
-        return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=pm2_status)
+        redis = await get_queue_redis()
+        await enqueue_task(redis, "agent_lifecycle", {
+            "action": "start",
+            "pm2_name": agent.pm2_name,
+            "agent_id": str(agent.id),
+            "env": env,
+        })
     except Exception as e:
         agent.status = "error"
         await db.commit()
-        raise HTTPException(status_code=500, detail=f"Failed to start agent: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue agent start: {e}")
+
+    await db.refresh(agent)
+    return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=None)
 
 
-@router.post("/{agent_id}/stop", response_model=AgentStatusResponse)
+@router.post("/{agent_id}/stop", response_model=AgentStatusResponse, status_code=202)
 async def stop_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentStatusResponse:
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
@@ -476,42 +482,54 @@ async def stop_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSta
     if agent.status == "stopped":
         raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already stopped")
 
-    pm2 = PM2Client()
+    agent.status = "stopping"
+    await db.commit()
+
     try:
-        agent.status = "stopping"
-        await db.commit()
-        pm2_status = await pm2.stop(agent.pm2_name)
-        agent.status = "stopped"
-        await db.commit()
-        await db.refresh(agent)
-        return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=pm2_status)
+        redis = await get_queue_redis()
+        await enqueue_task(redis, "agent_lifecycle", {
+            "action": "stop",
+            "pm2_name": agent.pm2_name,
+            "agent_id": str(agent.id),
+        })
     except Exception as e:
         agent.status = "error"
         await db.commit()
-        raise HTTPException(status_code=500, detail=f"Failed to stop agent: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue agent stop: {e}")
+
+    await db.refresh(agent)
+    return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=None)
 
 
-@router.post("/{agent_id}/restart", response_model=AgentStatusResponse)
+@router.post("/{agent_id}/restart", response_model=AgentStatusResponse, status_code=202)
 async def restart_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentStatusResponse:
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    pm2 = PM2Client()
+    agent.status = "starting"
+    await db.commit()
+
+    env = dict(agent.env_vars or {})
+    env["PACO_API_URL"] = settings.internal_api_url
+    env["PACO_AGENT_ID"] = str(agent.id)
+
     try:
-        agent.status = "starting"
-        await db.commit()
-        pm2_status = await pm2.restart(agent.pm2_name)
-        agent.status = "running"
-        agent.last_health_check = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(agent)
-        return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=pm2_status)
+        redis = await get_queue_redis()
+        await enqueue_task(redis, "agent_lifecycle", {
+            "action": "restart",
+            "pm2_name": agent.pm2_name,
+            "agent_id": str(agent.id),
+            "env": env,
+        })
     except Exception as e:
         agent.status = "error"
         await db.commit()
-        raise HTTPException(status_code=500, detail=f"Failed to restart agent: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue agent restart: {e}")
+
+    await db.refresh(agent)
+    return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=None)
 
 
 class ApplyResponse(BaseModel):

@@ -180,14 +180,20 @@ async def test_start_agent(
 ):
     agent = await create_test_agent(db_session, name="start-me")
 
-    with patch("app.api.agents.PM2Client") as MockPM2:
-        mock_pm2 = MockPM2.return_value
-        mock_pm2.start = AsyncMock(return_value={"status": "online"})
+    with patch("app.api.agents.get_queue_redis") as mock_get_redis, \
+         patch("app.api.agents.enqueue_task") as mock_enqueue:
+        mock_get_redis.return_value = AsyncMock()
+        mock_enqueue.return_value = "task-id-123"
 
         resp = await client.post(f"/api/agents/{agent.id}/start", headers=operator_headers)
 
-    assert resp.status_code == 200
-    assert resp.json()["agent"]["status"] == "running"
+    assert resp.status_code == 202
+    assert resp.json()["agent"]["status"] == "starting"
+    mock_enqueue.assert_awaited_once()
+    payload = mock_enqueue.call_args[0][2]
+    assert payload["action"] == "start"
+    assert payload["pm2_name"] == "start-me"
+    assert payload["agent_id"] == str(agent.id)
 
 
 @pytest.mark.asyncio
@@ -219,14 +225,18 @@ async def test_stop_agent(
 ):
     agent = await create_test_agent(db_session, name="stop-me", status="running")
 
-    with patch("app.api.agents.PM2Client") as MockPM2:
-        mock_pm2 = MockPM2.return_value
-        mock_pm2.stop = AsyncMock(return_value={"status": "stopped"})
+    with patch("app.api.agents.get_queue_redis") as mock_get_redis, \
+         patch("app.api.agents.enqueue_task") as mock_enqueue:
+        mock_get_redis.return_value = AsyncMock()
+        mock_enqueue.return_value = "task-id-456"
 
         resp = await client.post(f"/api/agents/{agent.id}/stop", headers=operator_headers)
 
-    assert resp.status_code == 200
-    assert resp.json()["agent"]["status"] == "stopped"
+    assert resp.status_code == 202
+    assert resp.json()["agent"]["status"] == "stopping"
+    mock_enqueue.assert_awaited_once()
+    payload = mock_enqueue.call_args[0][2]
+    assert payload["action"] == "stop"
 
 
 @pytest.mark.asyncio
