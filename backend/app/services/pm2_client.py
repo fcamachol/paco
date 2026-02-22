@@ -13,7 +13,9 @@ class PM2Client:
     """Client for interacting with PM2 process manager."""
 
     async def _run_pm2_command(
-        self, *args: str, env_override: Optional[Dict[str, str]] = None,
+        self, *args: str,
+        env_override: Optional[Dict[str, str]] = None,
+        timeout: float = 30.0,
     ) -> Dict[str, Any]:
         """Run a PM2 command and return JSON output."""
         cmd = ["pm2", "jlist", *args] if "jlist" in args else ["pm2", *args]
@@ -31,7 +33,9 @@ class PM2Client:
                 stderr=asyncio.subprocess.PIPE,
                 env=subprocess_env,
             )
-            stdout, stderr = await proc.communicate()
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
 
             if proc.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
@@ -47,6 +51,10 @@ class PM2Client:
 
             return {"output": output}
 
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return {"error": f"PM2 command timed out after {timeout}s"}
         except FileNotFoundError:
             return {"error": "PM2 not found. Please install PM2: npm install -g pm2"}
         except json.JSONDecodeError:

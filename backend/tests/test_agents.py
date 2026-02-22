@@ -4,6 +4,7 @@ Tests for the /api/agents endpoints.
 Covers CRUD, lifecycle start/stop (with mocked PM2), and authorization.
 """
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -235,3 +236,29 @@ async def test_stop_already_stopped(
     agent = await create_test_agent(db_session, name="already-stopped", status="stopped")
     resp = await client.post(f"/api/agents/{agent.id}/stop", headers=operator_headers)
     assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# PM2Client subprocess timeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pm2_client_timeout():
+    """PM2 client should return error dict when subprocess exceeds timeout."""
+    from app.services.pm2_client import PM2Client
+
+    pm2 = PM2Client()
+
+    with patch("app.services.pm2_client.asyncio.create_subprocess_exec") as mock_exec:
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+        mock_proc.kill = AsyncMock()
+        mock_proc.wait = AsyncMock()
+        mock_exec.return_value = mock_proc
+
+        result = await pm2._run_pm2_command("start", "test-proc", timeout=0.1)
+
+    assert "error" in result
+    assert "timed out" in result["error"].lower()
+    mock_proc.kill.assert_called_once()
