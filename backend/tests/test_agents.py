@@ -262,3 +262,59 @@ async def test_pm2_client_timeout():
     assert "error" in result
     assert "timed out" in result["error"].lower()
     mock_proc.kill.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# agent_lifecycle queue task
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_lifecycle_task_sets_running(db_session: AsyncSession):
+    """Queue task should set agent status to 'running' after successful PM2 start."""
+    from app.services.queue.tasks.agent_lifecycle import handle
+
+    agent = await create_test_agent(db_session, name="lifecycle-start", status="starting")
+
+    with patch("app.services.queue.tasks.agent_lifecycle.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.start = AsyncMock(return_value={"status": "online"})
+
+        with patch("app.services.queue.tasks.agent_lifecycle.async_session_maker") as mock_maker:
+            mock_maker.return_value.__aenter__ = AsyncMock(return_value=db_session)
+            mock_maker.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await handle({
+                "action": "start",
+                "pm2_name": "lifecycle-start",
+                "agent_id": str(agent.id),
+            }, redis=AsyncMock())
+
+    await db_session.refresh(agent)
+    assert agent.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_agent_lifecycle_task_sets_error_on_failure(db_session: AsyncSession):
+    """Queue task should set agent status to 'error' when PM2 call fails."""
+    from app.services.queue.tasks.agent_lifecycle import handle
+
+    agent = await create_test_agent(db_session, name="lifecycle-fail", status="starting")
+
+    with patch("app.services.queue.tasks.agent_lifecycle.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.start = AsyncMock(side_effect=RuntimeError("PM2 command timed out"))
+
+        with patch("app.services.queue.tasks.agent_lifecycle.async_session_maker") as mock_maker:
+            mock_maker.return_value.__aenter__ = AsyncMock(return_value=db_session)
+            mock_maker.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with pytest.raises(RuntimeError):
+                await handle({
+                    "action": "start",
+                    "pm2_name": "lifecycle-fail",
+                    "agent_id": str(agent.id),
+                }, redis=AsyncMock())
+
+    await db_session.refresh(agent)
+    assert agent.status == "error"

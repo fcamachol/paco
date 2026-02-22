@@ -37,29 +37,47 @@ async def handle(payload: Dict[str, Any], redis: Redis) -> None:
         return
 
     pm2 = PM2Client()
+    status_map = {"start": "running", "restart": "running", "stop": "stopped"}
 
-    if action == "start":
-        await pm2.start(pm2_name, env=env)
-    elif action == "stop":
-        await pm2.stop(pm2_name)
-    elif action == "restart":
-        await pm2.restart(pm2_name)
-    else:
-        logger.warning("agent_lifecycle: unknown action %s", action)
-        return
+    try:
+        if action == "start":
+            await pm2.start(pm2_name, env=env)
+        elif action == "stop":
+            await pm2.stop(pm2_name)
+        elif action == "restart":
+            await pm2.restart(pm2_name)
+        else:
+            logger.warning("agent_lifecycle: unknown action %s", action)
+            return
 
-    # Update agent status in DB
-    if agent_id:
-        status_map = {"start": "running", "restart": "running", "stop": "stopped"}
-        async with async_session_maker() as db:
-            from uuid import UUID
-            result = await db.execute(select(Agent).where(Agent.id == UUID(agent_id)))
-            agent = result.scalar_one_or_none()
-            if agent:
-                agent.status = status_map.get(action, agent.status)
-                await db.commit()
+        # Update agent status on success
+        if agent_id:
+            async with async_session_maker() as db:
+                from uuid import UUID
+                result = await db.execute(select(Agent).where(Agent.id == UUID(agent_id)))
+                agent = result.scalar_one_or_none()
+                if agent:
+                    agent.status = status_map.get(action, agent.status)
+                    await db.commit()
 
-    logger.info("Agent lifecycle %s completed for %s", action, pm2_name)
+        logger.info("Agent lifecycle %s completed for %s", action, pm2_name)
+
+    except Exception as e:
+        # Set status to error so the agent doesn't stay stuck in "starting"
+        if agent_id:
+            try:
+                async with async_session_maker() as db:
+                    from uuid import UUID
+                    result = await db.execute(select(Agent).where(Agent.id == UUID(agent_id)))
+                    agent = result.scalar_one_or_none()
+                    if agent:
+                        agent.status = "error"
+                        await db.commit()
+            except Exception:
+                logger.exception("Failed to set agent %s status to error", agent_id)
+
+        logger.error("Agent lifecycle %s failed for %s: %s", action, pm2_name, e)
+        raise  # Re-raise so dispatcher can retry with backoff
 
 
 def register(dispatcher: "TaskDispatcher") -> None:
