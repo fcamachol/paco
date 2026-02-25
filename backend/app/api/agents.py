@@ -255,18 +255,20 @@ async def get_agent(agent_id: UUID, db: DbSession) -> AgentDetailResponse:
                 )
 
     # Build skills list and add allowed_tools from skills (single loop)
-    from app.services.skill_filesystem import SkillFilesystemService
-    fs = SkillFilesystemService()
     skills_list = []
     for ask in agent.agent_skills:
-        skill_allowed_tools: List[str] = []
+        skill_allowed_tools: List[str] = ask.skill.allowed_tools or []
         if ask.is_enabled:
-            try:
-                fs_data = fs.read_skill_md(ask.skill.code)
-                skill_allowed_tools = fs_data.get("allowed_tools", [])
-                allowed_tools.extend(skill_allowed_tools)
-            except FileNotFoundError:
-                pass
+            # Fallback to filesystem if DB allowed_tools is empty
+            if not skill_allowed_tools:
+                try:
+                    from app.services.skill_filesystem import SkillFilesystemService
+                    fs = SkillFilesystemService()
+                    fs_data = fs.read_skill_md(ask.skill.code)
+                    skill_allowed_tools = fs_data.get("allowed_tools", [])
+                except (FileNotFoundError, Exception):
+                    pass
+            allowed_tools.extend(skill_allowed_tools)
         skills_list.append(AgentSkillInfo(
             code=ask.skill.code,
             name=ask.skill.name,

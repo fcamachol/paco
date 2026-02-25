@@ -58,18 +58,25 @@ class SDKOptionsBuilder:
             if not ask.is_enabled:
                 continue
             skill = ask.skill
-            try:
-                fs_data = self.fs.read_skill_md(skill.code)
-            except FileNotFoundError:
-                fs_data = {"name": skill.name, "description": "", "allowed_tools": [], "body": ""}
+            body = skill.body or ""
+            skill_tools = skill.allowed_tools or []
 
-            skill_tools = fs_data.get("allowed_tools", [])
+            # Fallback to filesystem if DB body is empty (pre-migration)
+            if not body:
+                try:
+                    fs_data = self.fs.read_skill_md(skill.code)
+                    body = fs_data.get("body", "")
+                    if not skill_tools:
+                        skill_tools = fs_data.get("allowed_tools", [])
+                except (FileNotFoundError, Exception):
+                    pass
+
             allowed_tools.extend(skill_tools)
             skills_data.append({
                 "code": skill.code,
-                "name": fs_data.get("name", skill.name),
-                "description": fs_data.get("description", ""),
-                "body": fs_data.get("body", ""),
+                "name": skill.name,
+                "description": skill.description or "",
+                "body": body,
                 "allowed_tools": skill_tools,
                 "resource_files": self.fs.list_resource_files(skill.code),
             })

@@ -126,9 +126,10 @@ async def _resolve_api_key(agent_id: Optional[str] = None) -> str:
 
 
 async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[str], Optional[str]]:
-    """Load enabled skill bodies from the filesystem for an agent.
+    """Load enabled skill bodies from DB for an agent.
 
     Returns (skill_bodies, skill_names, error_message).
+    DB is the primary source; filesystem is a fallback for pre-migration data.
     """
     if not agent_id:
         return [], [], None
@@ -137,7 +138,6 @@ async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[s
         from app.db.models import Agent, AgentSkill
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
-        from app.services.skill_filesystem import SkillFilesystemService
 
         async with async_session_maker() as db:
             result = await db.execute(
@@ -152,21 +152,30 @@ async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[s
             if not agent.agent_skills:
                 return [], [], None
 
-            fs = SkillFilesystemService()
             skill_bodies = []
             skill_names = []
             for ask in agent.agent_skills:
                 if not ask.is_enabled:
                     continue
-                try:
-                    fs_data = fs.read_skill_md(ask.skill.code)
-                    body = fs_data.get("body", "").strip()
-                    if body:
-                        skill_name = fs_data.get("name", ask.skill.code)
-                        skill_names.append(skill_name)
-                        skill_bodies.append(f"## Skill: {skill_name}\n\n{body}")
-                except FileNotFoundError:
-                    skill_names.append(f"{ask.skill.code} (SKILL.md not found)")
+                skill = ask.skill
+                body = (skill.body or "").strip()
+
+                # Fallback to filesystem if DB body is empty (pre-migration)
+                if not body:
+                    try:
+                        from app.services.skill_filesystem import SkillFilesystemService
+                        fs = SkillFilesystemService()
+                        fs_data = fs.read_skill_md(skill.code)
+                        body = fs_data.get("body", "").strip()
+                    except (FileNotFoundError, Exception):
+                        pass
+
+                if body:
+                    skill_name = skill.name or skill.code
+                    skill_names.append(skill_name)
+                    skill_bodies.append(f"## Skill: {skill_name}\n\n{body}")
+                else:
+                    skill_names.append(f"{skill.code} (no content)")
             return skill_bodies, skill_names, None
     except Exception as e:
         return [], [], f"Skill loading error: {str(e)}"

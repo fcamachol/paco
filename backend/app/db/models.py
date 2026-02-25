@@ -141,10 +141,10 @@ class Tool(Base):
 
 
 class Skill(Base):
-    """Reusable skill definitions — index-only DB record.
+    """Reusable skill definitions.
 
-    Content lives on the filesystem as SKILL.md files.
-    DB stores only the index for querying and agent associations.
+    DB is source of truth for skill content (body, allowed_tools).
+    Filesystem SKILL.md is kept as a best-effort mirror.
     """
 
     __tablename__ = "skills"
@@ -157,6 +157,8 @@ class Skill(Base):
     code: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    body: Mapped[Optional[str]] = mapped_column(Text)
+    allowed_tools: Mapped[list] = mapped_column(JSONB, default=list)
     skill_path: Mapped[Optional[str]] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -1,8 +1,8 @@
 """
 PACO Skills API
 
-Filesystem is source of truth for skill content (SKILL.md).
-DB is an index for querying and agent associations.
+DB is source of truth for skill content (body, allowed_tools).
+Filesystem SKILL.md is kept as a best-effort mirror.
 """
 
 import io
@@ -75,21 +75,29 @@ class SkillAgentResponse(BaseModel):
 
 
 def _skill_to_response(skill: Skill, agent_count: int = 0) -> SkillResponse:
-    """Build response by merging DB index + filesystem content."""
-    try:
-        fs_data = fs.read_skill_md(skill.code)
-    except FileNotFoundError:
-        fs_data = {"name": skill.name, "description": skill.description or "", "allowed_tools": [], "body": ""}
+    """Build response from DB, with filesystem fallback for pre-migration data."""
+    body = skill.body or ""
+    allowed_tools = skill.allowed_tools or []
+
+    # Fallback to filesystem if DB body is empty (pre-migration)
+    if not body:
+        try:
+            fs_data = fs.read_skill_md(skill.code)
+            body = fs_data.get("body", "")
+            if not allowed_tools:
+                allowed_tools = fs_data.get("allowed_tools", [])
+        except FileNotFoundError:
+            pass
 
     resource_files = fs.list_resource_files(skill.code)
 
     return SkillResponse(
         id=str(skill.id),
         code=skill.code,
-        name=fs_data.get("name", skill.name),
-        description=fs_data.get("description", skill.description),
-        allowed_tools=fs_data.get("allowed_tools", []),
-        body=fs_data.get("body", ""),
+        name=skill.name,
+        description=skill.description,
+        allowed_tools=allowed_tools,
+        body=body,
         is_active=skill.is_active,
         resource_files=resource_files,
         agent_count=agent_count,
@@ -138,16 +146,28 @@ async def sync_skills_from_filesystem(
         result = await db.execute(select(Skill).where(Skill.code == code))
         existing = result.scalar_one_or_none()
 
+        # Read full content from filesystem for body/allowed_tools
+        try:
+            fs_content = fs.read_skill_md(code)
+        except FileNotFoundError:
+            fs_content = {}
+
         if existing:
             existing.name = skill_data.get("name", existing.name)
             existing.description = skill_data.get("description", existing.description)
             existing.skill_path = skill_data.get("skill_path")
+            if fs_content.get("body"):
+                existing.body = fs_content["body"]
+            if fs_content.get("allowed_tools"):
+                existing.allowed_tools = fs_content["allowed_tools"]
             updated += 1
         else:
             db.add(Skill(
                 code=code,
                 name=skill_data.get("name", code),
                 description=skill_data.get("description"),
+                body=fs_content.get("body", ""),
+                allowed_tools=fs_content.get("allowed_tools", []),
                 skill_path=skill_data.get("skill_path"),
                 is_active=True,
             ))
@@ -207,11 +227,13 @@ async def import_skill_md(
     # Write to filesystem
     fs.write_skill_md(code, fm.get("name", code), description, allowed_tools, body)
 
-    # Create DB index
+    # Create DB record (source of truth)
     skill = Skill(
         code=code,
         name=fm.get("name", code),
         description=description,
+        body=body,
+        allowed_tools=allowed_tools,
         skill_path=str(fs._skill_md_path(code)),
         is_active=True,
     )
@@ -247,11 +269,13 @@ async def create_skill(
         request.body,
     )
 
-    # Create DB index
+    # Create DB record (source of truth)
     skill = Skill(
         code=request.code,
         name=request.name,
         description=request.description,
+        body=request.body,
+        allowed_tools=request.allowed_tools,
         skill_path=str(fs._skill_md_path(request.code)),
         is_active=True,
     )
@@ -291,33 +315,44 @@ async def update_skill(
     db: DbSession,
     _: AdminUser,
 ) -> SkillResponse:
-    """Update a skill. Writes to filesystem, updates DB index."""
+    """Update a skill. DB is source of truth; filesystem is best-effort mirror."""
     skill = await _get_skill_or_404(code, db)
 
-    # Read current filesystem state
-    try:
-        current = fs.read_skill_md(code)
-    except FileNotFoundError:
-        current = {"name": skill.name, "description": skill.description or "", "allowed_tools": [], "body": ""}
+    # Read current values from DB (with filesystem fallback for pre-migration)
+    current_body = skill.body or ""
+    current_allowed_tools = skill.allowed_tools or []
+    if not current_body:
+        try:
+            fs_data = fs.read_skill_md(code)
+            current_body = fs_data.get("body", "")
+            if not current_allowed_tools:
+                current_allowed_tools = fs_data.get("allowed_tools", [])
+        except FileNotFoundError:
+            pass
 
     # Merge updates
-    name = request.name if request.name is not None else current["name"]
-    description = request.description if request.description is not None else current["description"]
-    allowed_tools = request.allowed_tools if request.allowed_tools is not None else current["allowed_tools"]
-    body = request.body if request.body is not None else current["body"]
+    name = request.name if request.name is not None else skill.name
+    description = request.description if request.description is not None else (skill.description or "")
+    allowed_tools = request.allowed_tools if request.allowed_tools is not None else current_allowed_tools
+    body = request.body if request.body is not None else current_body
 
-    # Write filesystem
-    fs.write_skill_md(code, name, description, allowed_tools, body)
-
-    # Update DB index
+    # Update DB (source of truth)
     skill.name = name
     skill.description = description
+    skill.body = body
+    skill.allowed_tools = allowed_tools
 
     if request.is_active is not None:
         skill.is_active = request.is_active
 
     await db.commit()
     await db.refresh(skill)
+
+    # Best-effort filesystem mirror
+    try:
+        fs.write_skill_md(code, name, description, allowed_tools, body)
+    except Exception:
+        pass
 
     count = await _get_agent_count(skill.id, db)
     return _skill_to_response(skill, agent_count=count)
@@ -371,12 +406,21 @@ async def export_skill_md(
     include_resources: bool = Query(False),
 ) -> Response:
     """Export a skill as SKILL.md file."""
-    await _get_skill_or_404(code, db)
+    skill = await _get_skill_or_404(code, db)
 
-    try:
-        skill_data = fs.read_skill_md(code)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"SKILL.md not found for '{code}'")
+    # Read from DB first, filesystem fallback
+    if skill.body:
+        skill_data = {
+            "name": skill.name,
+            "description": skill.description or "",
+            "allowed_tools": skill.allowed_tools or [],
+            "body": skill.body,
+        }
+    else:
+        try:
+            skill_data = fs.read_skill_md(code)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"No skill content found for '{code}'")
 
     # Rebuild SKILL.md content
     fm: Dict[str, Any] = {"name": skill_data["name"], "description": skill_data["description"]}
