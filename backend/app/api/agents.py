@@ -446,8 +446,8 @@ async def start_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSt
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-    if agent.status == "running":
-        raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already running")
+    if agent.status in ("running", "starting"):
+        raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already {agent.status}")
 
     agent.status = "starting"
     await db.commit()
@@ -479,8 +479,8 @@ async def stop_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSta
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-    if agent.status == "stopped":
-        raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already stopped")
+    if agent.status in ("stopped", "stopping"):
+        raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already {agent.status}")
 
     agent.status = "stopping"
     await db.commit()
@@ -610,7 +610,17 @@ async def get_agent_status(agent_id: UUID, db: DbSession) -> AgentStatusResponse
             agent.status = "stopped"
         elif pm2_state in ("errored", "error"):
             agent.status = "error"
+        elif pm2_state == "launching":
+            agent.status = "starting"
+        elif pm2_state == "stopping":
+            agent.status = "stopping"
         await db.commit()
+    else:
+        # PM2 has no record of this process — correct stale transitional states
+        if agent.status in ("starting", "running"):
+            agent.status = "stopped"
+            await db.commit()
+            await db.refresh(agent)
 
     return AgentStatusResponse(agent=_agent_to_response(agent), pm2_status=pm2_status)
 

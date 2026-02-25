@@ -52,7 +52,11 @@ export default function AgentDetailPage() {
   } = useQuery({
     queryKey: ["agent", id],
     queryFn: () => api.getAgent(id),
-    refetchInterval: 15000,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      // Poll faster during transitional states to catch status changes quickly
+      return status === "starting" || status === "stopping" ? 3000 : 15000;
+    },
   });
 
   // Fetch available tools and skills for assignment
@@ -261,6 +265,8 @@ export default function AgentDetailPage() {
 
   const isRunning = agent.status === "running";
   const isStopped = agent.status === "stopped";
+  const isError = agent.status === "error";
+  const isTransitioning = agent.status === "starting" || agent.status === "stopping";
   const lifecycleLoading =
     startMutation.isPending ||
     stopMutation.isPending ||
@@ -383,7 +389,13 @@ export default function AgentDetailPage() {
           {/* Lifecycle controls */}
           {isOperator && (
             <div className="flex items-center gap-2 mt-2">
-              {isStopped && (
+              {isTransitioning && (
+                <div className="flex items-center gap-2 text-sm text-foreground-muted">
+                  <div className="animate-spin w-4 h-4 border-2 border-coral-500 border-t-transparent rounded-full" />
+                  {agent.status === "starting" ? "Starting..." : "Stopping..."}
+                </div>
+              )}
+              {(isStopped || isError) && (
                 <button
                   onClick={() => startMutation.mutate()}
                   disabled={lifecycleLoading}
@@ -413,7 +425,7 @@ export default function AgentDetailPage() {
                   </button>
                 </>
               )}
-              {lifecycleLoading && (
+              {lifecycleLoading && !isTransitioning && (
                 <div className="animate-spin w-4 h-4 border-2 border-coral-500 border-t-transparent rounded-full ml-2" />
               )}
             </div>

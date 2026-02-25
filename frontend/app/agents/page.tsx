@@ -38,7 +38,14 @@ export default function AgentsPage() {
   const { data: agents = [], isLoading, refetch } = useQuery({
     queryKey: ["agents"],
     queryFn: () => api.getAgents(),
-    refetchInterval: 30000,
+    refetchInterval: (query) => {
+      const list = query.state.data;
+      // Poll faster when any agent is in a transitional state
+      const hasTransitioning = list?.some(
+        (a) => a.status === "starting" || a.status === "stopping"
+      );
+      return hasTransitioning ? 3000 : 30000;
+    },
   });
 
   // Mutations

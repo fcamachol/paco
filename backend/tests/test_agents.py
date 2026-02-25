@@ -328,3 +328,132 @@ async def test_agent_lifecycle_task_sets_error_on_failure(db_session: AsyncSessi
 
     await db_session.refresh(agent)
     assert agent.status == "error"
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: Guard transitional states — start rejects "starting" agents
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_already_starting(
+    client: AsyncClient, db_session: AsyncSession, operator_headers: dict,
+):
+    """Starting an agent that is already 'starting' should return 409."""
+    agent = await create_test_agent(db_session, name="already-starting", status="starting")
+    resp = await client.post(f"/api/agents/{agent.id}/start", headers=operator_headers)
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_stop_already_stopping(
+    client: AsyncClient, db_session: AsyncSession, operator_headers: dict,
+):
+    """Stopping an agent that is already 'stopping' should return 409."""
+    agent = await create_test_agent(db_session, name="already-stopping", status="stopping")
+    resp = await client.post(f"/api/agents/{agent.id}/stop", headers=operator_headers)
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: Status reconciliation — PM2 null resets stale transitional states
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_reconciles_starting_when_pm2_unknown(
+    client: AsyncClient, db_session: AsyncSession,
+):
+    """Agent stuck in 'starting' should become 'stopped' when PM2 has no record."""
+    agent = await create_test_agent(db_session, name="ghost-start", status="starting")
+    headers = make_auth_header("viewer")
+
+    with patch("app.api.agents.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.status = AsyncMock(return_value=None)  # PM2 doesn't know this process
+
+        resp = await client.get(f"/api/agents/{agent.id}/status", headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["status"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_status_reconciles_running_when_pm2_unknown(
+    client: AsyncClient, db_session: AsyncSession,
+):
+    """Agent claiming 'running' should become 'stopped' when PM2 has no record."""
+    agent = await create_test_agent(db_session, name="ghost-run", status="running")
+    headers = make_auth_header("viewer")
+
+    with patch("app.api.agents.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.status = AsyncMock(return_value=None)
+
+        resp = await client.get(f"/api/agents/{agent.id}/status", headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["status"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_status_keeps_stopped_when_pm2_unknown(
+    client: AsyncClient, db_session: AsyncSession,
+):
+    """Agent already 'stopped' should stay 'stopped' when PM2 has no record."""
+    agent = await create_test_agent(db_session, name="already-stop", status="stopped")
+    headers = make_auth_header("viewer")
+
+    with patch("app.api.agents.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.status = AsyncMock(return_value=None)
+
+        resp = await client.get(f"/api/agents/{agent.id}/status", headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["status"] == "stopped"
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: Handle all PM2 states in reconciliation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_status_maps_launching_to_starting(
+    client: AsyncClient, db_session: AsyncSession,
+):
+    """PM2 'launching' state should map to 'starting'."""
+    agent = await create_test_agent(db_session, name="launching-agent", status="starting")
+    headers = make_auth_header("viewer")
+
+    with patch("app.api.agents.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.status = AsyncMock(return_value={
+            "pm2_env": {"status": "launching"},
+        })
+
+        resp = await client.get(f"/api/agents/{agent.id}/status", headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["status"] == "starting"
+
+
+@pytest.mark.asyncio
+async def test_status_maps_stopping_to_stopping(
+    client: AsyncClient, db_session: AsyncSession,
+):
+    """PM2 'stopping' state should map to 'stopping'."""
+    agent = await create_test_agent(db_session, name="stopping-agent", status="stopping")
+    headers = make_auth_header("viewer")
+
+    with patch("app.api.agents.PM2Client") as MockPM2:
+        mock_pm2 = MockPM2.return_value
+        mock_pm2.status = AsyncMock(return_value={
+            "pm2_env": {"status": "stopping"},
+        })
+
+        resp = await client.get(f"/api/agents/{agent.id}/status", headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["agent"]["status"] == "stopping"

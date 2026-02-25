@@ -105,7 +105,7 @@ export function AgentCard({
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-3 border-t border-border">
-        {isStopped && (
+        {(isStopped || effectiveStatus === "error") && (
           <button
             onClick={(e) => {
               e.stopPropagation();
