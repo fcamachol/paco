@@ -1,0 +1,231 @@
+/**
+ * PACO Session Reporter
+ *
+ * Reports agent session data (turns, completions) to the PACO API.
+ * Reads PACO_API_URL and PACO_AGENT_ID from the environment.
+ * Gracefully disabled when PACO_API_URL is not set.
+ *
+ * All HTTP calls use a 5-second timeout and fire-and-forget semantics:
+ * errors are logged but never thrown to the caller.
+ */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface TurnData {
+  role: string;
+  content_text?: string;
+  content_blocks?: any;
+  tool_name?: string;
+  tool_call_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost?: number;
+  latency_ms?: number;
+  model?: string;
+  stop_reason?: string;
+  raw_request?: Record<string, unknown>;
+  raw_response?: Record<string, unknown>;
+  thinking_content?: string;
+}
+
+interface SessionStats {
+  status: string;
+  error_message?: string;
+}
+
+interface BufferedTurn {
+  sessionId: string;
+  turnData: TurnData;
+  timestamp: number;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const MAX_BUFFER_SIZE = 100;
+const HTTP_TIMEOUT_MS = 5_000;
+
+// ---------------------------------------------------------------------------
+// SessionReporter
+// ---------------------------------------------------------------------------
+
+class SessionReporter {
+  private readonly apiUrl: string | undefined;
+  private readonly agentId: string | undefined;
+  private readonly buffer: BufferedTurn[] = [];
+
+  constructor() {
+    this.apiUrl = process.env.PACO_API_URL;
+    this.agentId = process.env.PACO_AGENT_ID;
+
+    if (this.apiUrl) {
+      console.log(`[session-reporter] PACO API URL: ${this.apiUrl}`);
+    } else {
+      console.log('[session-reporter] PACO_API_URL not set — session reporting disabled');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Public API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Start a new session run. Returns the server-assigned session ID, or null
+   * if the reporter is disabled or the request fails.
+   */
+  async startSession(
+    conversationId: string,
+    trigger: string,
+    model: string,
+    inputMessage: string,
+  ): Promise<string | null> {
+    if (!this.apiUrl) return null;
+
+    try {
+      const res = await this.post('/api/session-runs', {
+        conversation_id: conversationId,
+        trigger,
+        model,
+        input_message: inputMessage,
+      });
+
+      if (!res || !res.ok) {
+        console.warn('[session-reporter] startSession: non-OK response', res?.status);
+        return null;
+      }
+
+      const body = await res.json();
+      return body?.id ?? body?.session_id ?? null;
+    } catch (err) {
+      console.warn('[session-reporter] startSession error:', (err as Error).message);
+      return null;
+    }
+  }
+
+  /**
+   * Report a single turn (message) for an active session. The turn is also
+   * added to the local ring buffer so it can be retried via flushBuffer().
+   */
+  async reportTurn(sessionId: string, turnData: TurnData): Promise<void> {
+    if (!this.apiUrl) return;
+
+    this.addToBuffer({ sessionId, turnData, timestamp: Date.now() });
+
+    try {
+      const res = await this.post(`/api/session-runs/${sessionId}/messages`, turnData);
+      if (res && res.ok) {
+        // Successfully sent — remove from buffer
+        this.removeFromBuffer(sessionId, turnData);
+      }
+    } catch (err) {
+      console.warn('[session-reporter] reportTurn error:', (err as Error).message);
+    }
+  }
+
+  /**
+   * Complete a session. Flushes any buffered turns via the batch endpoint
+   * first, then marks the session as complete.
+   */
+  async completeSession(sessionId: string, stats: SessionStats): Promise<void> {
+    if (!this.apiUrl) return;
+
+    // Flush any remaining buffered turns for this session
+    await this.flushBuffer(sessionId);
+
+    try {
+      await this.post(`/api/session-runs/${sessionId}/complete`, stats);
+    } catch (err) {
+      console.warn('[session-reporter] completeSession error:', (err as Error).message);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Buffer management
+  // -------------------------------------------------------------------------
+
+  /**
+   * Flush all buffered turns for the given session via the batch endpoint.
+   */
+  private async flushBuffer(sessionId: string): Promise<void> {
+    const pending = this.buffer.filter((item) => item.sessionId === sessionId);
+    if (pending.length === 0) return;
+
+    try {
+      const res = await this.post(`/api/session-runs/${sessionId}/messages/batch`, {
+        messages: pending.map((item) => item.turnData),
+      });
+
+      if (res && res.ok) {
+        // Remove flushed items from buffer
+        for (const item of pending) {
+          const idx = this.buffer.indexOf(item);
+          if (idx !== -1) {
+            this.buffer.splice(idx, 1);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[session-reporter] flushBuffer error:', (err as Error).message);
+    }
+  }
+
+  private addToBuffer(entry: BufferedTurn): void {
+    this.buffer.push(entry);
+    while (this.buffer.length > MAX_BUFFER_SIZE) {
+      this.buffer.shift();
+    }
+  }
+
+  private removeFromBuffer(sessionId: string, turnData: TurnData): void {
+    const idx = this.buffer.findIndex(
+      (item) => item.sessionId === sessionId && item.turnData === turnData,
+    );
+    if (idx !== -1) {
+      this.buffer.splice(idx, 1);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // HTTP helpers
+  // -------------------------------------------------------------------------
+
+  private async post(path: string, body: unknown): Promise<Response | null> {
+    if (!this.apiUrl) return null;
+
+    const url = `${this.apiUrl}${path}`;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Paco-Agent-Id': this.agentId ?? '',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+      return res;
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        console.warn(`[session-reporter] Request timed out: POST ${path}`);
+      } else {
+        console.warn(`[session-reporter] Request failed: POST ${path}:`, (err as Error).message);
+      }
+      return null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Singleton export
+// ---------------------------------------------------------------------------
+
+export const sessionReporter = new SessionReporter();

@@ -19,6 +19,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+
+from app.services.session_capture import session_capture
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/playground", tags=["Playground"])
@@ -468,6 +470,7 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
     tool_calls_data: List[Dict[str, Any]] = []
     total_input_tokens = 0
     total_output_tokens = 0
+    session_id = None  # Session capture ID
 
     # 1. Emit agent_start
     yield format_sse(make_step(
@@ -493,6 +496,20 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
 
         # Resolve API key early (needed for classification)
         api_key = await _resolve_api_key(request.agent_id)
+
+        # Start session capture (fire-and-forget — never breaks SSE)
+        try:
+            session_id = await session_capture.start_session(
+                agent_id=request.agent_id,
+                source="playground",
+                title=request.message[:200] if request.message else None,
+                system_prompt=system_prompt,
+                model=model,
+            )
+            if session_id:
+                await session_capture.append_message(session_id, role="user", content_text=request.message)
+        except Exception:
+            pass
 
         # Extract tools from config
         tools_payload = []
@@ -647,9 +664,40 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                 elif block["type"] == "tool_use":
                     tool_uses.append(block)
 
-            # If no tool calls, we're done
+            # If no tool calls, we're done — capture final assistant response
             if not tool_uses:
+                try:
+                    if session_id:
+                        await session_capture.append_message(
+                            session_id, role="assistant", content_text=response_text,
+                            content_blocks=api_result.get("content"),
+                            input_tokens=usage.get("input_tokens"),
+                            output_tokens=usage.get("output_tokens"),
+                            cost=_estimate_cost(model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
+                            model=api_result.get("model", model),
+                            stop_reason=api_result.get("stop_reason"),
+                            raw_response=api_result,
+                        )
+                except Exception:
+                    pass
                 break
+
+            # Capture assistant response with tool_use blocks
+            try:
+                if session_id:
+                    await session_capture.append_message(
+                        session_id, role="assistant",
+                        content_text=response_text or None,
+                        content_blocks=api_result.get("content"),
+                        input_tokens=usage.get("input_tokens"),
+                        output_tokens=usage.get("output_tokens"),
+                        cost=_estimate_cost(model, usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
+                        model=api_result.get("model", model),
+                        stop_reason=api_result.get("stop_reason"),
+                        raw_response=api_result,
+                    )
+            except Exception:
+                pass
 
             # Execute tool calls and collect results
             tool_results_for_api = []
@@ -661,6 +709,18 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                     tool_name=tool_use["name"],
                     data={"input": tool_use.get("input", {}), "tool_use_id": tool_use["id"]},
                 ))
+
+                # Capture tool_use message
+                try:
+                    if session_id:
+                        await session_capture.append_message(
+                            session_id, role="tool_use",
+                            tool_name=tool_use["name"],
+                            tool_call_id=tool_use["id"],
+                            content_blocks=tool_use.get("input"),
+                        )
+                except Exception:
+                    pass
 
                 # Try to execute tool via MCP server
                 tool_output = await _call_mcp_tool(
@@ -677,6 +737,19 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                     data={"output": tool_output, "tool_use_id": tool_use["id"]},
                     duration_ms=tool_duration,
                 ))
+
+                # Capture tool_result message
+                try:
+                    if session_id:
+                        await session_capture.append_message(
+                            session_id, role="tool_result",
+                            tool_name=tool_use["name"],
+                            tool_call_id=tool_use["id"],
+                            content_text=json.dumps(tool_output, ensure_ascii=False, default=str),
+                            latency_ms=int(tool_duration),
+                        )
+                except Exception:
+                    pass
 
                 tool_calls_data.append({
                     "tool_name": tool_use["name"],
@@ -748,6 +821,13 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             tool_calls_data=tool_calls_data or None,
         )
 
+        # End session capture (fire-and-forget)
+        try:
+            if session_id:
+                await session_capture.end_session(session_id, status="completed")
+        except Exception:
+            pass
+
     except Exception as e:
         yield format_sse(make_step(
             "error",
@@ -767,6 +847,13 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             start_timestamp=start_time,
             tool_calls_data=tool_calls_data or None,
         )
+
+        # End session capture on error (fire-and-forget)
+        try:
+            if session_id:
+                await session_capture.end_session(session_id, status="error", error_message=str(e))
+        except Exception:
+            pass
 
 
 @router.post("/agent/run")
