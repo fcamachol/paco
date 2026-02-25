@@ -12,6 +12,7 @@ import re
 import time
 import traceback
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -21,6 +22,21 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/playground", tags=["Playground"])
+
+
+# =============================================================================
+# Skill Routing
+# =============================================================================
+
+
+@dataclass
+class SkillInfo:
+    """Holds skill metadata for classification and routing."""
+    code: str
+    name: str
+    description: str
+    body: str
+    allowed_tools: List[str] = field(default_factory=list)
 
 
 # =============================================================================
@@ -125,14 +141,14 @@ async def _resolve_api_key(agent_id: Optional[str] = None) -> str:
     return os.environ.get("ANTHROPIC_API_KEY", "") or _get_api_key()
 
 
-async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[str], Optional[str]]:
-    """Load enabled skill bodies from DB for an agent.
+async def _load_skill_metadata(agent_id: Optional[str]) -> tuple[List[SkillInfo], Optional[str]]:
+    """Load enabled skill metadata from DB for an agent.
 
-    Returns (skill_bodies, skill_names, error_message).
+    Returns (skills, error_message).
     DB is the primary source; filesystem is a fallback for pre-migration data.
     """
     if not agent_id:
-        return [], [], None
+        return [], None
     try:
         from app.db.session import async_session_maker
         from app.db.models import Agent, AgentSkill
@@ -147,13 +163,12 @@ async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[s
             )
             agent = result.scalar_one_or_none()
             if not agent:
-                return [], [], f"Agent '{agent_id}' not found in DB for skill loading"
+                return [], f"Agent '{agent_id}' not found in DB for skill loading"
 
             if not agent.agent_skills:
-                return [], [], None
+                return [], None
 
-            skill_bodies = []
-            skill_names = []
+            skills: List[SkillInfo] = []
             for ask in agent.agent_skills:
                 if not ask.is_enabled:
                     continue
@@ -171,14 +186,110 @@ async def _load_agent_skills(agent_id: Optional[str]) -> tuple[List[str], List[s
                         pass
 
                 if body:
-                    skill_name = skill.name or skill.code
-                    skill_names.append(skill_name)
-                    skill_bodies.append(f"## Skill: {skill_name}\n\n{body}")
-                else:
-                    skill_names.append(f"{skill.code} (no content)")
-            return skill_bodies, skill_names, None
+                    skills.append(SkillInfo(
+                        code=skill.code,
+                        name=skill.name or skill.code,
+                        description=(skill.description or "").strip(),
+                        body=body,
+                        allowed_tools=skill.allowed_tools or [],
+                    ))
+            return skills, None
     except Exception as e:
-        return [], [], f"Skill loading error: {str(e)}"
+        return [], f"Skill loading error: {str(e)}"
+
+
+async def _classify_message(
+    message: str,
+    skills: List[SkillInfo],
+    api_key: str,
+    conversation_history: List[Dict[str, str]] = [],
+) -> Dict[str, Any]:
+    """Classify a user message to select the best matching skill.
+
+    Mirrors the deployed agent's classifier.ts.j2 behavior:
+    1. LLM classification via Claude Haiku
+    2. Fallback chain: parse JSON → fuzzy match code → first skill
+
+    Returns {"skill_code": str, "confidence": float, "method": str}.
+    """
+    valid_codes = {s.code for s in skills}
+
+    # Build skill descriptions for classification prompt
+    skill_descriptions = "\n".join(
+        f"- {s.code}: {s.name} — {s.description or 'No description'}"
+        for s in skills
+    )
+
+    # Include recent conversation history for context
+    recent_msgs = [
+        m["content"] for m in conversation_history
+        if m.get("role") == "user"
+    ][-3:]
+    history_text = ""
+    if recent_msgs:
+        history_text = f"\nHistorial reciente:\n" + "\n".join(recent_msgs)
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-3-5-20241022",
+                    "max_tokens": 100,
+                    "temperature": 0.1,
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            f"Clasifica este mensaje del usuario en una de las siguientes categorías.\n\n"
+                            f"Categorías disponibles:\n{skill_descriptions}\n\n"
+                            f"Mensaje: \"{message}\"{history_text}\n\n"
+                            f"Responde SOLO con JSON: {{\"skill\": \"CODIGO\", \"confidence\": 0.0-1.0}}"
+                        ),
+                    }],
+                },
+            )
+            if resp.status_code == 200:
+                llm_result = resp.json()
+                raw_text = "".join(
+                    b["text"] for b in llm_result.get("content", []) if b.get("type") == "text"
+                ).strip()
+
+                # Try to parse JSON response
+                try:
+                    parsed = json.loads(raw_text)
+                    skill_code = parsed.get("skill", "")
+                    if skill_code in valid_codes:
+                        return {
+                            "skill_code": skill_code,
+                            "confidence": float(parsed.get("confidence", 0.7)),
+                            "method": "llm",
+                        }
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+                # Fuzzy match: look for any valid code in the raw text
+                raw_upper = raw_text.upper()
+                for code in valid_codes:
+                    if code.upper() in raw_upper:
+                        return {
+                            "skill_code": code,
+                            "confidence": 0.6,
+                            "method": "llm_fuzzy",
+                        }
+    except Exception:
+        pass  # Fall through to fallback
+
+    # Fallback: first skill
+    return {
+        "skill_code": skills[0].code,
+        "confidence": 0.3,
+        "method": "fallback",
+    }
 
 
 async def _call_mcp_tool(tool_name: str, tool_input: Dict[str, Any], agent_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -380,22 +491,8 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             or "You are a helpful assistant."
         )
 
-        # Load and inject skill prompts into the system prompt
-        skill_bodies, skill_names, skill_error = await _load_agent_skills(request.agent_id)
-        if skill_bodies:
-            skills_section = "\n\n# Skills\n\nYou have the following skills available. You MUST check and use them when relevant to the user's request.\n\n" + "\n\n".join(skill_bodies)
-            system_prompt = system_prompt + skills_section
-
-        # Emit skill loading status so it's visible in the execution trace
-        yield format_sse(make_step(
-            "skill_check",
-            agent_id=agent_name,
-            data={
-                "skills_loaded": len(skill_bodies),
-                "skill_names": skill_names,
-                "error": skill_error,
-            },
-        ))
+        # Resolve API key early (needed for classification)
+        api_key = await _resolve_api_key(request.agent_id)
 
         # Extract tools from config
         tools_payload = []
@@ -410,8 +507,87 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                     "input_schema": tool_schema if tool_schema else {"type": "object", "properties": {}},
                 })
 
-        # Resolve API key: per-agent > DB global > env var fallback
-        api_key = await _resolve_api_key(request.agent_id)
+        # --- Skill classification and routing ---
+        skills, skill_error = await _load_skill_metadata(request.agent_id)
+        selected_skill: Optional[SkillInfo] = None
+        classification_data: Dict[str, Any] = {}
+
+        if len(skills) == 0:
+            # No skills — unchanged behavior, no classification
+            classification_data = {"skills_loaded": 0, "error": skill_error}
+        elif len(skills) == 1:
+            # Single skill — skip LLM call, use directly
+            selected_skill = skills[0]
+            classification_data = {
+                "skills_loaded": 1,
+                "skill_names": [selected_skill.name],
+                "category": selected_skill.code,
+                "confidence": 1.0,
+                "method": "single_skill",
+            }
+        else:
+            # 2+ skills — classify via LLM
+            classify_start = time.time()
+            if api_key:
+                classify_result = await _classify_message(
+                    message=request.message,
+                    skills=skills,
+                    api_key=api_key,
+                    conversation_history=request.conversation_history,
+                )
+            else:
+                classify_result = {
+                    "skill_code": skills[0].code,
+                    "confidence": 0.3,
+                    "method": "fallback",
+                }
+            classify_duration = (time.time() - classify_start) * 1000
+
+            # Find the matched skill
+            matched = next((s for s in skills if s.code == classify_result["skill_code"]), skills[0])
+            selected_skill = matched
+
+            classification_data = {
+                "skills_loaded": len(skills),
+                "skill_names": [s.name for s in skills],
+                "category": classify_result["skill_code"],
+                "confidence": classify_result["confidence"],
+                "method": classify_result["method"],
+            }
+
+            # Emit classification step
+            yield format_sse(make_step(
+                "classification",
+                agent_id=agent_name,
+                data=classification_data,
+                duration_ms=classify_duration,
+            ))
+
+            # Emit routing step
+            yield format_sse(make_step(
+                "routing",
+                agent_id=selected_skill.name,
+                data={
+                    "skill_code": selected_skill.code,
+                    "skill_name": selected_skill.name,
+                },
+            ))
+
+        # Inject selected skill into system prompt
+        if selected_skill:
+            system_prompt = system_prompt + "\n\n" + selected_skill.body
+
+            # Filter tools to only those allowed by the selected skill
+            if selected_skill.allowed_tools:
+                allowed_set = set(selected_skill.allowed_tools)
+                tools_payload = [t for t in tools_payload if t["name"] in allowed_set]
+
+        # Emit skill loading status (visible in execution trace)
+        yield format_sse(make_step(
+            "skill_check",
+            agent_id=agent_name,
+            data=classification_data,
+        ))
         if not api_key:
             yield format_sse(make_step(
                 "error",
