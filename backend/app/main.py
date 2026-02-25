@@ -16,7 +16,7 @@ from sqlalchemy import select
 from app.api import agents, auth, codegen, company, executions, hive, infrastructures, infra_codegen, infra_deploy, infra_monitor, infra_upgrade, playground, proxy, settings as settings_api, skills, tools, users, workflows, ws
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
-from app.db.models import Base, User
+from app.db.models import Base, McpServer, User
 from app.db.session import async_session_maker, engine
 from app.services.langfuse_client import langfuse_client
 
@@ -149,6 +149,39 @@ async def _sync_tools_on_startup():
     print("Tool sync attempt completed")
 
 
+async def _reconcile_managed_servers():
+    """Re-deploy managed MCP server containers that were lost during a redeploy."""
+    try:
+        from app.services.mcp_orchestrator import mcp_orchestrator
+
+        async with async_session_maker() as db:
+            result = await db.execute(
+                select(McpServer).where(
+                    McpServer.deployment_mode == "managed",
+                    McpServer.deploy_status == "running",
+                )
+            )
+            servers = result.scalars().all()
+
+            if not servers:
+                print("No managed MCP servers to reconcile")
+                return
+
+            report = await mcp_orchestrator.reconcile_managed_servers(db)
+            if report["already_running"]:
+                print(f"  MCP containers already running: {', '.join(report['already_running'])}")
+            if report["reconciled"]:
+                print(f"  MCP containers re-deployed: {', '.join(report['reconciled'])}")
+            if report["failed"]:
+                for f in report["failed"]:
+                    print(f"  MCP reconcile FAILED for {f['name']}: {f['error']}")
+
+    except Exception as e:
+        print(f"MCP reconciliation error: {e}")
+
+    print("MCP managed server reconciliation completed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -178,6 +211,12 @@ async def lifespan(app: FastAPI):
         await _sync_tools_on_startup()
     except Exception as e:
         print(f"Tool sync warning: {e}")
+
+    # Reconcile managed MCP server containers (re-deploy if lost during redeploy)
+    try:
+        await _reconcile_managed_servers()
+    except Exception as e:
+        print(f"MCP reconciliation warning: {e}")
 
     # Start queue-based background tasks (or fall back to asyncio scheduler)
     from app.services.heartbeat_scheduler import heartbeat_scheduler
