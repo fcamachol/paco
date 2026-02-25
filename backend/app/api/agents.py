@@ -449,19 +449,22 @@ async def start_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSt
     if agent.status in ("running", "starting"):
         raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already {agent.status}")
 
-    agent.status = "starting"
-    await db.commit()
-
+    # Capture values before commit (commit expires attributes in production)
+    agent_id_str = str(agent.id)
+    pm2_name = agent.pm2_name
     env = dict(agent.env_vars or {})
     env["PACO_API_URL"] = settings.internal_api_url
-    env["PACO_AGENT_ID"] = str(agent.id)
+    env["PACO_AGENT_ID"] = agent_id_str
+
+    agent.status = "starting"
+    await db.commit()
 
     try:
         redis = await get_queue_redis()
         await enqueue_task(redis, "agent_lifecycle", {
             "action": "start",
-            "pm2_name": agent.pm2_name,
-            "agent_id": str(agent.id),
+            "pm2_name": pm2_name,
+            "agent_id": agent_id_str,
             "env": env,
         })
     except Exception as e:
@@ -482,6 +485,10 @@ async def stop_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSta
     if agent.status in ("stopped", "stopping"):
         raise HTTPException(status_code=409, detail=f"Agent '{agent.name}' is already {agent.status}")
 
+    # Capture values before commit (commit expires attributes in production)
+    agent_id_str = str(agent.id)
+    pm2_name = agent.pm2_name
+
     agent.status = "stopping"
     await db.commit()
 
@@ -489,8 +496,8 @@ async def stop_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSta
         redis = await get_queue_redis()
         await enqueue_task(redis, "agent_lifecycle", {
             "action": "stop",
-            "pm2_name": agent.pm2_name,
-            "agent_id": str(agent.id),
+            "pm2_name": pm2_name,
+            "agent_id": agent_id_str,
         })
     except Exception as e:
         agent.status = "error"
@@ -508,19 +515,22 @@ async def restart_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> Agent
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
-    agent.status = "starting"
-    await db.commit()
-
+    # Capture values before commit (commit expires attributes in production)
+    agent_id_str = str(agent.id)
+    pm2_name = agent.pm2_name
     env = dict(agent.env_vars or {})
     env["PACO_API_URL"] = settings.internal_api_url
-    env["PACO_AGENT_ID"] = str(agent.id)
+    env["PACO_AGENT_ID"] = agent_id_str
+
+    agent.status = "starting"
+    await db.commit()
 
     try:
         redis = await get_queue_redis()
         await enqueue_task(redis, "agent_lifecycle", {
             "action": "restart",
-            "pm2_name": agent.pm2_name,
-            "agent_id": str(agent.id),
+            "pm2_name": pm2_name,
+            "agent_id": agent_id_str,
             "env": env,
         })
     except Exception as e:
