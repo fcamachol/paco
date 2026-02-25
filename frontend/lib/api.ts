@@ -1339,6 +1339,52 @@ class ApiClient {
     return this.request<WebhookEventTypeInfo[]>("/api/webhooks/events");
   }
 
+  // Session Runs endpoints
+  async getSessionRuns(params?: {
+    agent_id?: string;
+    user_id?: string;
+    source?: string;
+    status?: string;
+    page?: number;
+    per_page?: number;
+  }) {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined) {
+          searchParams.append(key, String(value));
+        }
+      });
+    }
+    const query = searchParams.toString();
+    return this.request<SessionRunListResponse>(
+      `/api/session-runs${query ? `?${query}` : ""}`
+    );
+  }
+
+  async getSessionRun(id: string) {
+    return this.request<SessionRunDetail>(`/api/session-runs/${id}`);
+  }
+
+  async getSessionMessage(sessionId: string, messageId: string) {
+    return this.request<SessionMessageDetail>(
+      `/api/session-runs/${sessionId}/messages/${messageId}`
+    );
+  }
+
+  async verifySessionIntegrity(id: string) {
+    return this.request<SessionIntegrityResult>(
+      `/api/session-runs/${id}/verify`
+    );
+  }
+
+  async searchSessionRuns(query: string, params?: { agent_id?: string; source?: string; limit?: number }) {
+    return this.request<SessionRunSearchResponse>("/api/session-runs/search", {
+      method: "POST",
+      body: JSON.stringify({ query, ...params }),
+    });
+  }
+
 }
 
 // Builder types
@@ -1963,6 +2009,93 @@ export interface WebhookEventTypeInfo {
   event_type: string;
   description: string;
   category: string;
+}
+
+// Session Runs types
+export interface SessionRun {
+  id: string;
+  agent_id: string | null;
+  user_id: string | null;
+  source: string;
+  title: string | null;
+  status: string;
+  model: string | null;
+  message_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost: number;
+  total_duration_ms: number;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
+
+export interface SessionMessage {
+  id: string;
+  session_run_id: string;
+  execution_id: string | null;
+  sequence_number: number;
+  role: string;
+  content_text: string | null;
+  content_blocks: any;
+  tool_name: string | null;
+  tool_call_id: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost: number | null;
+  latency_ms: number | null;
+  model: string | null;
+  stop_reason: string | null;
+  thinking_content: string | null;
+  message_hash: string | null;
+  metadata: Record<string, any>;
+  created_at: string;
+}
+
+export interface SessionMessageDetail extends SessionMessage {
+  raw_request: Record<string, any> | null;
+  raw_response: Record<string, any> | null;
+}
+
+export interface SessionRunDetail extends SessionRun {
+  system_prompt: string | null;
+  system_prompt_hash: string | null;
+  integrity_hash: string | null;
+  messages: SessionMessage[];
+  execution_ids: string[];
+  metadata: Record<string, any>;
+}
+
+export interface SessionRunListResponse {
+  items: SessionRun[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface SessionIntegrityResult {
+  session_run_id: string;
+  integrity_valid: boolean;
+  message_count: number;
+  errors: string[];
+}
+
+export interface SessionRunSearchResponse {
+  results: SessionRunSearchResult[];
+  total: number;
+  query: string;
+}
+
+export interface SessionRunSearchResult {
+  session_run_id: string;
+  title: string | null;
+  source: string;
+  status: string;
+  message_id: string;
+  role: string;
+  content_text: string | null;
+  headline: string | null;
+  created_at: string;
 }
 
 // Export singleton instance

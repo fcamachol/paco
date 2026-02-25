@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Network,
   Zap,
+  MessageSquare,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ const navigation = [
   { name: "Tools", href: "/tools", icon: Wrench },
   { name: "Skills", href: "/skills", icon: BookOpen },
   { name: "Executions", href: "/executions", icon: Activity },
+  { name: "Sessions", href: "/session-runs", icon: MessageSquare },
   { name: "Training", href: "/training", icon: Zap },
   { name: "Users", href: "/users", icon: Users, adminOnly: true },
   { name: "Settings", href: "/settings", icon: Settings },
