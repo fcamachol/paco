@@ -73,7 +73,7 @@ export function OutboundDeliveryLog({ webhookId }: OutboundDeliveryLogProps) {
           expanded={expandedId === delivery.id}
           onToggle={() => setExpandedId(expandedId === delivery.id ? null : delivery.id)}
           onRetry={() => retryMutation.mutate(delivery.id)}
-          canRetry={isOperator && delivery.status === "failed"}
+          canRetry={!!isOperator && delivery.status === "failed"}
           retrying={retryMutation.isPending}
         />
       ))}
