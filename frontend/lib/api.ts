@@ -1339,6 +1339,48 @@ class ApiClient {
     return this.request<WebhookEventTypeInfo[]>("/api/webhooks/events");
   }
 
+  // ---- External Services ----
+
+  async getExternalServices() {
+    return this.request<ExternalService[]>("/api/services");
+  }
+
+  async createExternalService(data: CreateExternalServiceRequest) {
+    return this.request<ExternalService>("/api/services", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getExternalService(id: string) {
+    return this.request<ExternalService>(`/api/services/${id}`);
+  }
+
+  async updateExternalService(id: string, data: UpdateExternalServiceRequest) {
+    return this.request<ExternalService>(`/api/services/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteExternalService(id: string) {
+    return this.request<void>(`/api/services/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  async checkExternalServiceHealth(id: string) {
+    return this.request<ExternalService>(`/api/services/${id}/health`, {
+      method: "POST",
+    });
+  }
+
+  async checkAllExternalServicesHealth() {
+    return this.request<ExternalService[]>("/api/services/health/all", {
+      method: "POST",
+    });
+  }
+
 }
 
 // Builder types
@@ -1573,6 +1615,50 @@ export interface McpServer {
   image_tag: string;
   last_deployed_at: string | null;
   created_at: string;
+}
+
+export interface ExternalService {
+  id: string;
+  name: string;
+  service_type: string;
+  provider: string;
+  base_url: string | null;
+  api_key_env_var: string | null;
+  auth_config: Record<string, any>;
+  health_check_endpoint: string | null;
+  health_check_method: string;
+  status: string;
+  last_health_check: string | null;
+  response_time_ms: number | null;
+  last_error: string | null;
+  is_auto_seeded: boolean;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateExternalServiceRequest {
+  name: string;
+  service_type?: string;
+  provider?: string;
+  base_url?: string | null;
+  api_key_env_var?: string | null;
+  auth_config?: Record<string, any>;
+  health_check_endpoint?: string | null;
+  health_check_method?: string;
+  description?: string | null;
+}
+
+export interface UpdateExternalServiceRequest {
+  name?: string;
+  service_type?: string;
+  provider?: string;
+  base_url?: string | null;
+  api_key_env_var?: string | null;
+  auth_config?: Record<string, any>;
+  health_check_endpoint?: string | null;
+  health_check_method?: string;
+  description?: string | null;
 }
 
 export interface CreateMcpServerRequest {

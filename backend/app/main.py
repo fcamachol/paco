@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from app.api import agents, auth, codegen, company, executions, hive, infrastructures, infra_codegen, infra_deploy, infra_monitor, infra_upgrade, playground, proxy, settings as settings_api, skills, tools, users, workflows, ws
+from app.api import agents, auth, codegen, company, executions, hive, infrastructures, infra_codegen, infra_deploy, infra_monitor, infra_upgrade, playground, proxy, services as services_api, settings as settings_api, skills, tools, users, workflows, ws
 from app.core.config import settings
 from app.core.security import get_password_hash, verify_password
 from app.db.models import Base, McpServer, User
@@ -149,6 +149,143 @@ async def _sync_tools_on_startup():
     print("Tool sync attempt completed")
 
 
+async def _seed_external_services():
+    """Auto-seed external services from configured API keys."""
+    import os
+    from app.db.models import ExternalService, GlobalSetting
+
+    SEED_DEFS = [
+        {
+            "provider": "anthropic",
+            "name": "Anthropic Claude API",
+            "service_type": "llm_provider",
+            "base_url": "https://api.anthropic.com",
+            "api_key_env_var": "ANTHROPIC_API_KEY",
+        },
+        {
+            "provider": "openai",
+            "name": "OpenAI Whisper",
+            "service_type": "media_processor",
+            "base_url": "https://api.openai.com",
+            "api_key_env_var": "OPENAI_API_KEY",
+        },
+        {
+            "provider": "gemini",
+            "name": "Google Gemini",
+            "service_type": "media_processor",
+            "base_url": "https://generativelanguage.googleapis.com",
+            "api_key_env_var": "GEMINI_API_KEY",
+        },
+        {
+            "provider": "google_maps",
+            "name": "Google Maps",
+            "service_type": "integration",
+            "base_url": "https://maps.googleapis.com",
+            "api_key_env_var": "GOOGLE_MAPS_API_KEY",
+        },
+        {
+            "provider": "chatwoot",
+            "name": "Chatwoot",
+            "service_type": "integration",
+            "base_url": os.environ.get("CHATWOOT_BASE_URL", ""),
+            "api_key_env_var": "CHATWOOT_API_TOKEN",
+        },
+        {
+            "provider": "cea_api",
+            "name": "CEA API",
+            "service_type": "integration",
+            "base_url": "https://aquacis-cf.ceaqueretaro.gob.mx",
+            "api_key_env_var": None,
+            "auth_config": {"proxy_url": os.environ.get("CEA_PROXY_URL", "")},
+        },
+        {
+            "provider": "langfuse",
+            "name": "Langfuse",
+            "service_type": "observability",
+            "base_url": settings.langfuse_host,
+            "api_key_env_var": None,
+            "auth_config": {
+                "public_key": settings.langfuse_public_key,
+                "secret_key": settings.langfuse_secret_key,
+            },
+        },
+        {
+            "provider": "postgres_ext",
+            "name": "Agora Database",
+            "service_type": "database",
+            "base_url": None,
+            "api_key_env_var": None,
+            "auth_config": {
+                "host": os.environ.get("PGHOST", ""),
+                "port": os.environ.get("PGPORT", "5432"),
+                "user": os.environ.get("PGUSER", ""),
+                "password": os.environ.get("PGPASSWORD", ""),
+                "database": os.environ.get("PGDATABASE", ""),
+            },
+        },
+    ]
+
+    try:
+        async with async_session_maker() as db:
+            # Load DB-stored API keys for checking
+            db_keys: dict[str, str] = {}
+            try:
+                result = await db.execute(select(GlobalSetting))
+                for s in result.scalars():
+                    db_keys[s.key] = s.value
+            except Exception:
+                pass
+
+            seeded = 0
+            for defn in SEED_DEFS:
+                provider = defn["provider"]
+                env_var = defn.get("api_key_env_var")
+
+                # Check if the key/config exists
+                has_config = False
+                if env_var:
+                    has_config = bool(db_keys.get(env_var) or os.environ.get(env_var))
+                elif provider == "langfuse":
+                    has_config = bool(settings.langfuse_public_key and settings.langfuse_secret_key)
+                elif provider == "cea_api":
+                    has_config = bool(os.environ.get("CEA_PROXY_URL"))
+                elif provider == "postgres_ext":
+                    has_config = bool(os.environ.get("PGHOST"))
+
+                if not has_config:
+                    continue
+
+                # Upsert: only insert if no auto-seeded entry for this provider exists
+                existing = await db.execute(
+                    select(ExternalService).where(
+                        ExternalService.provider == provider,
+                        ExternalService.is_auto_seeded == True,
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                svc = ExternalService(
+                    name=defn["name"],
+                    service_type=defn["service_type"],
+                    provider=provider,
+                    base_url=defn.get("base_url"),
+                    api_key_env_var=env_var,
+                    auth_config=defn.get("auth_config", {}),
+                    is_auto_seeded=True,
+                )
+                db.add(svc)
+                seeded += 1
+
+            if seeded:
+                await db.commit()
+                print(f"External services: seeded {seeded} entries")
+            else:
+                print("External services: all up to date")
+    except Exception as e:
+        print(f"External services seed warning: {e}")
+
+
 async def _reconcile_managed_servers():
     """Re-deploy managed MCP server containers that were lost during a redeploy."""
     try:
@@ -211,6 +348,12 @@ async def lifespan(app: FastAPI):
         await _sync_tools_on_startup()
     except Exception as e:
         print(f"Tool sync warning: {e}")
+
+    # Seed external services from configured API keys
+    try:
+        await _seed_external_services()
+    except Exception as e:
+        print(f"External services seed warning: {e}")
 
     # Reconcile managed MCP server containers (re-deploy if lost during redeploy)
     try:
@@ -399,6 +542,7 @@ app.include_router(infra_upgrade.router, prefix="/api")
 app.include_router(playground.router, prefix="/api")
 app.include_router(hive.router, prefix="/api")
 app.include_router(company.router, prefix="/api")
+app.include_router(services_api.router, prefix="/api")
 app.include_router(settings_api.router, prefix="/api")
 app.include_router(ws.router)
 

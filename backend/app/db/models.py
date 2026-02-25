@@ -102,6 +102,38 @@ class McpServer(Base):
     tools: Mapped[List["Tool"]] = relationship(back_populates="mcp_server")
 
 
+class ExternalService(Base):
+    """External service integration registry."""
+
+    __tablename__ = "external_services"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    service_type: Mapped[str] = mapped_column(String(50), nullable=False, default="custom")
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="custom")
+    base_url: Mapped[Optional[str]] = mapped_column(String(500))
+    api_key_env_var: Mapped[Optional[str]] = mapped_column(String(255))
+    auth_config: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    health_check_endpoint: Mapped[Optional[str]] = mapped_column(String(500))
+    health_check_method: Mapped[str] = mapped_column(String(10), default="GET")
+    status: Mapped[str] = mapped_column(String(50), default="unknown")
+    last_health_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    response_time_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    is_auto_seeded: Mapped[bool] = mapped_column(Boolean, default=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Tool(Base):
     """Tool registry."""
 
