@@ -224,6 +224,7 @@ class Agent(Base):
     agent_skills: Mapped[List["AgentSkill"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
     )
+    session_runs: Mapped[List["SessionRun"]] = relationship(back_populates="agent")
 
 
 class AgentSkill(Base):
@@ -322,10 +323,14 @@ class Execution(Base):
     status: Mapped[str] = mapped_column(String(50), default="running")
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     extra_metadata: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    session_run_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("session_runs.id", ondelete="SET NULL")
+    )
 
     # Relationships
     agent: Mapped[Optional["Agent"]] = relationship(back_populates="executions")
     tool_calls: Mapped[List["ToolCall"]] = relationship(back_populates="execution")
+    session_run: Mapped[Optional["SessionRun"]] = relationship()
 
 
 class ToolCall(Base):
@@ -356,6 +361,112 @@ class ToolCall(Base):
 
     # Relationships
     execution: Mapped[Optional["Execution"]] = relationship(back_populates="tool_calls")
+
+
+# =============================================================================
+# Session Runs Models (Full Conversation Replay)
+# =============================================================================
+
+
+class SessionRun(Base):
+    """Session run — conversation container for full replay and audit."""
+
+    __tablename__ = "session_runs"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    agent_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL")
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(String(255))
+    source: Mapped[str] = mapped_column(String(50), default="playground")
+    title: Mapped[Optional[str]] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(50), default="active")
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text)
+    system_prompt_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    model: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # Aggregated metrics
+    message_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_cost: Mapped[float] = mapped_column(Numeric(10, 6), default=0)
+    total_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Integrity
+    integrity_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    agent: Mapped[Optional["Agent"]] = relationship(back_populates="session_runs")
+    messages: Mapped[List["SessionMessage"]] = relationship(
+        back_populates="session_run",
+        cascade="all, delete-orphan",
+        order_by="SessionMessage.sequence_number",
+    )
+
+
+class SessionMessage(Base):
+    """Individual message within a session run — append-only for audit."""
+
+    __tablename__ = "session_messages"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.uuid_generate_v4(),
+    )
+    session_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("session_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    execution_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("executions.id", ondelete="SET NULL")
+    )
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(50), nullable=False)
+    content_text: Mapped[Optional[str]] = mapped_column(Text)
+    content_blocks: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    tool_name: Mapped[Optional[str]] = mapped_column(String(255))
+    tool_call_id: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # Per-message metrics
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    cost: Mapped[Optional[float]] = mapped_column(Numeric(10, 6))
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+
+    model: Mapped[Optional[str]] = mapped_column(String(255))
+    stop_reason: Mapped[Optional[str]] = mapped_column(String(50))
+
+    # Full API payloads (for detail endpoint only)
+    raw_request: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+    raw_response: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
+
+    # Extended thinking traces
+    thinking_content: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Hash chain link for tamper detection
+    message_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    session_run: Mapped["SessionRun"] = relationship(back_populates="messages")
 
 
 class Flow(Base):

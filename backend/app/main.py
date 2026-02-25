@@ -380,6 +380,10 @@ app.include_router(webhooks.router, prefix="/api")
 app.include_router(inbound_webhooks.crud_router, prefix="/api/agents/{agent_id}/webhooks/inbound")
 app.include_router(inbound_webhooks.receiver_router, prefix="/api")
 
+# Session Runs (full conversation replay)
+from app.api import session_runs
+app.include_router(session_runs.router, prefix="/api")
+
 
 # =============================================================================
 # Error Handlers
