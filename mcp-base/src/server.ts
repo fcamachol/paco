@@ -227,6 +227,89 @@ async function main(): Promise<void> {
     }
   });
 
+  // Direct JSON-RPC endpoint (stateless — used by PACO backend for tool calls)
+  app.post("/", express.json(), async (req, res) => {
+    const { method, params, id } = req.body;
+
+    if (method === "tools/list") {
+      return res.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          tools: manifest.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.input_schema,
+          })),
+        },
+      });
+    }
+
+    if (method === "tools/call") {
+      const { name, arguments: args } = params || {};
+      try {
+        const toolDef = toolMap.get(name);
+        if (!toolDef) {
+          return res.json({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32601, message: `Unknown tool: "${name}"` },
+          });
+        }
+
+        const shouldBypassProxy =
+          toolDef.handler_type === "sql" || toolDef.handler_type === "code";
+        const dispatcher = shouldBypassProxy
+          ? null
+          : (() => {
+              const urlField =
+                toolDef.handler_config.url || toolDef.handler_config.endpoint || "";
+              if (typeof urlField === "string" && proxyManager.shouldBypass(name, urlField)) {
+                return null;
+              }
+              return proxyManager.getDispatcherForTool(name);
+            })();
+
+        const rawResult = await executeHandler(
+          toolDef.handler_type,
+          toolDef.handler_config,
+          (args ?? {}) as Record<string, any>,
+          getToolEnv(),
+          name,
+          dispatcher,
+          toolDef.retry_config,
+          toolDef.timeout_ms,
+        );
+
+        const result = toolDef.output_transform
+          ? applyOutputTransform(rawResult, toolDef.output_transform)
+          : rawResult;
+
+        return res.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: result }],
+          },
+        });
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        console.error(`[Server] Direct call "${name}" failed: ${errorMessage}`);
+        return res.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: JSON.stringify({ error: errorMessage }) }],
+            isError: true,
+          },
+        });
+      }
+    }
+
+    res.status(400).json({ error: `Unknown method: ${method}` });
+  });
+
   // Health check
   app.get("/health", (_req, res) => {
     res.json({
