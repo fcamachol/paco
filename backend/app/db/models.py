@@ -191,6 +191,7 @@ class Skill(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     body: Mapped[Optional[str]] = mapped_column(Text)
     allowed_tools: Mapped[list] = mapped_column(JSONB, default=list)
+    keywords: Mapped[list] = mapped_column(JSONB, default=list)
     skill_path: Mapped[Optional[str]] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

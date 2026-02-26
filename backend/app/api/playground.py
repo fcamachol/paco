@@ -39,6 +39,7 @@ class SkillInfo:
     description: str
     body: str
     allowed_tools: List[str] = field(default_factory=list)
+    keywords: List[str] = field(default_factory=list)
 
 
 # =============================================================================
@@ -52,6 +53,7 @@ class AgentRunRequest(BaseModel):
     conversation_history: List[Dict[str, str]] = []  # For multi-turn
     tools_config: List[Dict[str, Any]] = []  # Tool/MCP configs from connected nodes
     agent_id: Optional[str] = None  # DB agent ID to look up per-agent env_vars
+    previous_category: Optional[str] = None  # Sticky routing: last classified skill code
 
 
 class InfraRunRequest(BaseModel):
@@ -194,35 +196,67 @@ async def _load_skill_metadata(agent_id: Optional[str]) -> tuple[List[SkillInfo]
                         description=(skill.description or "").strip(),
                         body=body,
                         allowed_tools=skill.allowed_tools or [],
+                        keywords=skill.keywords or [],
                     ))
             return skills, None
     except Exception as e:
         return [], f"Skill loading error: {str(e)}"
 
 
-async def _classify_message(
+def _keyword_classify(
+    message: str,
+    skills: List[SkillInfo],
+) -> Optional[Dict[str, Any]]:
+    """Deterministic keyword matching — instant, no API call.
+
+    Mirrors the deployed Maria-Claude agent.ts keyword classifier.
+    Each skill's `keywords` list is checked against the lowercased message.
+    If there's a clear winner (>50% of total keyword hits), return it.
+    """
+    message_lower = message.lower()
+    scores: Dict[str, int] = {}
+
+    for skill in skills:
+        if not skill.keywords:
+            continue
+        for kw in skill.keywords:
+            if kw.lower() in message_lower:
+                scores[skill.code] = scores.get(skill.code, 0) + 1
+
+    if not scores:
+        return None
+
+    best = max(scores, key=lambda k: scores[k])
+    total = sum(scores.values())
+
+    # Clear winner: best code has >50% of total keyword hits
+    if scores[best] / total > 0.5:
+        return {
+            "skill_code": best,
+            "confidence": round(scores[best] / total, 2),
+            "method": "keyword",
+        }
+
+    return None
+
+
+async def _llm_classify(
     message: str,
     skills: List[SkillInfo],
     api_key: str,
     conversation_history: List[Dict[str, str]] = [],
-) -> Dict[str, Any]:
-    """Classify a user message to select the best matching skill.
+) -> Optional[Dict[str, Any]]:
+    """LLM classification via Claude Haiku — used when keywords don't match.
 
-    Mirrors the deployed agent's classifier.ts.j2 behavior:
-    1. LLM classification via Claude Haiku
-    2. Fallback chain: parse JSON → fuzzy match code → first skill
-
-    Returns {"skill_code": str, "confidence": float, "method": str}.
+    Returns None if the API call fails (caller should fall through to fallback).
     """
     valid_codes = {s.code for s in skills}
 
-    # Build skill descriptions for classification prompt
     skill_descriptions = "\n".join(
         f"- {s.code}: {s.name} — {s.description or 'No description'}"
         for s in skills
     )
 
-    # Include recent conversation history for context
     recent_msgs = [
         m["content"] for m in conversation_history
         if m.get("role") == "user"
@@ -241,7 +275,7 @@ async def _classify_message(
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-3-5-20241022",
+                    "model": "claude-3-5-haiku-20241022",
                     "max_tokens": 100,
                     "temperature": 0.1,
                     "messages": [{
@@ -250,43 +284,88 @@ async def _classify_message(
                             f"Clasifica este mensaje del usuario en una de las siguientes categorías.\n\n"
                             f"Categorías disponibles:\n{skill_descriptions}\n\n"
                             f"Mensaje: \"{message}\"{history_text}\n\n"
-                            f"Responde SOLO con JSON: {{\"skill\": \"CODIGO\", \"confidence\": 0.0-1.0}}"
+                            f"Responde SOLO con JSON: {{\"skill\": \"CODIGO\", \"confidence\": 0.0-1.0}}\n"
+                            f"Códigos válidos: {', '.join(sorted(valid_codes))}"
                         ),
                     }],
                 },
             )
-            if resp.status_code == 200:
-                llm_result = resp.json()
-                raw_text = "".join(
-                    b["text"] for b in llm_result.get("content", []) if b.get("type") == "text"
-                ).strip()
+            if resp.status_code != 200:
+                return None
 
-                # Try to parse JSON response
-                try:
-                    parsed = json.loads(raw_text)
-                    skill_code = parsed.get("skill", "")
-                    if skill_code in valid_codes:
-                        return {
-                            "skill_code": skill_code,
-                            "confidence": float(parsed.get("confidence", 0.7)),
-                            "method": "llm",
-                        }
-                except (json.JSONDecodeError, ValueError):
-                    pass
+            llm_result = resp.json()
+            raw_text = "".join(
+                b["text"] for b in llm_result.get("content", []) if b.get("type") == "text"
+            ).strip()
 
-                # Fuzzy match: look for any valid code in the raw text
-                raw_upper = raw_text.upper()
-                for code in valid_codes:
-                    if code.upper() in raw_upper:
-                        return {
-                            "skill_code": code,
-                            "confidence": 0.6,
-                            "method": "llm_fuzzy",
-                        }
+            # Try to parse JSON response
+            try:
+                parsed = json.loads(raw_text)
+                skill_code = parsed.get("skill", "")
+                if skill_code in valid_codes:
+                    return {
+                        "skill_code": skill_code,
+                        "confidence": float(parsed.get("confidence", 0.7)),
+                        "method": "llm",
+                    }
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            # Fuzzy match: look for any valid code in the raw text
+            # Sort by length descending to avoid substring collisions (e.g. "CON" in "CONTRATOS")
+            raw_upper = raw_text.upper()
+            for code in sorted(valid_codes, key=len, reverse=True):
+                if code.upper() in raw_upper:
+                    return {
+                        "skill_code": code,
+                        "confidence": 0.6,
+                        "method": "llm_fuzzy",
+                    }
     except Exception:
-        pass  # Fall through to fallback
+        pass
 
-    # Fallback: first skill
+    return None
+
+
+async def _classify_message(
+    message: str,
+    skills: List[SkillInfo],
+    api_key: str,
+    conversation_history: List[Dict[str, str]] = [],
+    previous_category: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Classify a user message to select the best matching skill.
+
+    Mirrors the deployed Maria-Claude agent behavior:
+    1. Keyword matching (deterministic, instant)
+    2. Sticky routing (keep previous skill for follow-up messages)
+    3. LLM classification via Claude Haiku (ambiguous messages)
+    4. Final fallback to first skill
+
+    Returns {"skill_code": str, "confidence": float, "method": str}.
+    """
+    valid_codes = {s.code for s in skills}
+
+    # Step 1: Keyword matching — deterministic, instant
+    keyword_result = _keyword_classify(message, skills)
+    if keyword_result:
+        return keyword_result
+
+    # Step 2: Sticky routing — if no keyword match, keep previous skill
+    if previous_category and previous_category in valid_codes:
+        return {
+            "skill_code": previous_category,
+            "confidence": 0.8,
+            "method": "sticky",
+        }
+
+    # Step 3: LLM classification — for first messages without keyword match
+    if api_key:
+        llm_result = await _llm_classify(message, skills, api_key, conversation_history)
+        if llm_result:
+            return llm_result
+
+    # Step 4: Fallback — first skill
     return {
         "skill_code": skills[0].code,
         "confidence": 0.3,
@@ -551,6 +630,7 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                     skills=skills,
                     api_key=api_key,
                     conversation_history=request.conversation_history,
+                    previous_category=request.previous_category,
                 )
             else:
                 classify_result = {

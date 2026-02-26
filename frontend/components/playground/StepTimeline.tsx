@@ -169,6 +169,7 @@ export const StepTimeline: React.FC<StepTimelineProps> = ({ steps, collapsed = f
                     <div className="ml-4.5 text-foreground-muted truncate">
                       {step.data.category}
                       {step.data.confidence != null && ` (${(step.data.confidence * 100).toFixed(0)}%)`}
+                      {step.data.method && <span className="opacity-60"> · {step.data.method}</span>}
                     </div>
                   )}
                   {!isStepExpanded && step.step === 'decomposition' && step.data.task_count != null && (

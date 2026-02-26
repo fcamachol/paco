@@ -26,6 +26,7 @@ export function usePlayground() {
   const [steps, setSteps] = useState<StepEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [previousCategory, setPreviousCategory] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const parseSSEStream = async (
@@ -98,6 +99,7 @@ export function usePlayground() {
           tools_config: toolsConfig,
           conversation_history: conversationHistory,
           agent_id: agentId,
+          previous_category: previousCategory,
         }),
         signal: controller.signal,
       });
@@ -126,6 +128,11 @@ export function usePlayground() {
       await parseSSEStream(response, (event) => {
         runSteps.push(event);
         setSteps([...runSteps]);
+
+        // Track classified category for sticky routing
+        if (event.step === 'classification' && event.data.category) {
+          setPreviousCategory(event.data.category);
+        }
 
         if (event.step === 'response') {
           responseText = event.data.text || '';
@@ -175,7 +182,7 @@ export function usePlayground() {
     }
 
     setIsRunning(false);
-  }, [messages]);
+  }, [messages, previousCategory]);
 
   const runInfra = useCallback(async (
     message: string,
@@ -274,6 +281,7 @@ export function usePlayground() {
   const clearConversation = useCallback(() => {
     setMessages([]);
     setSteps([]);
+    setPreviousCategory(null);
   }, []);
 
   const stopRun = useCallback(() => {
