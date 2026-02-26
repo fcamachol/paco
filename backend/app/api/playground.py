@@ -251,6 +251,9 @@ async def _llm_classify(
 
     Returns None if the API call fails (caller should fall through to fallback).
     """
+    import logging
+    logger = logging.getLogger("playground.classify")
+
     valid_codes = {s.code for s in skills}
 
     skill_descriptions = "\n".join(
@@ -292,12 +295,14 @@ async def _llm_classify(
                 },
             )
             if resp.status_code != 200:
+                logger.warning(f"LLM classify HTTP {resp.status_code}: {resp.text[:200]}")
                 return None
 
             llm_result = resp.json()
             raw_text = "".join(
                 b["text"] for b in llm_result.get("content", []) if b.get("type") == "text"
             ).strip()
+            logger.info(f"LLM classify raw response: {raw_text}")
 
             # Try to parse JSON response
             try:
@@ -309,8 +314,10 @@ async def _llm_classify(
                         "confidence": float(parsed.get("confidence", 0.7)),
                         "method": "llm",
                     }
-            except (json.JSONDecodeError, ValueError):
-                pass
+                else:
+                    logger.warning(f"LLM returned invalid skill code '{skill_code}', valid: {valid_codes}")
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"LLM classify JSON parse error: {e}, raw: {raw_text[:200]}")
 
             # Fuzzy match: look for any valid code in the raw text
             # Sort by length descending to avoid substring collisions (e.g. "CON" in "CONTRATOS")
@@ -322,8 +329,8 @@ async def _llm_classify(
                         "confidence": 0.6,
                         "method": "llm_fuzzy",
                     }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"LLM classify exception: {type(e).__name__}: {e}")
 
     return None
 
