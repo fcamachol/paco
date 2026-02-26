@@ -239,21 +239,6 @@ async def _seed_external_services():
             seeded = 0
             for defn in SEED_DEFS:
                 provider = defn["provider"]
-                env_var = defn.get("api_key_env_var")
-
-                # Check if the key/config exists
-                has_config = False
-                if env_var:
-                    has_config = bool(db_keys.get(env_var) or os.environ.get(env_var))
-                elif provider == "langfuse":
-                    has_config = bool(settings.langfuse_public_key and settings.langfuse_secret_key)
-                elif provider == "cea_api":
-                    has_config = bool(os.environ.get("CEA_PROXY_URL"))
-                elif provider == "postgres_ext":
-                    has_config = bool(os.environ.get("PGHOST"))
-
-                if not has_config:
-                    continue
 
                 # Upsert: only insert if no auto-seeded entry for this provider exists
                 existing = await db.execute(

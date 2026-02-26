@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   RefreshCw,
@@ -13,6 +13,10 @@ import {
   AlertCircle,
   HelpCircle,
   Plug,
+  Key,
+  Save,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Header } from "@/components/ui/Header";
 import {
@@ -303,6 +307,182 @@ function ServiceModal({
 }
 
 // ---------------------------------------------------------------------------
+// API Key Inline Editor
+// ---------------------------------------------------------------------------
+
+function ApiKeyInlineEditor({
+  envVar,
+  serviceId,
+}: {
+  envVar: string;
+  serviceId: string;
+}) {
+  const queryClient = useQueryClient();
+  const [keyValue, setKeyValue] = useState("");
+  const [showInput, setShowInput] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch current status
+  const { data: keyStatus, refetch: refetchStatus } = useQuery({
+    queryKey: ["api-key-status", envVar],
+    queryFn: () => api.getApiKeyStatusByEnv(envVar),
+  });
+
+  const source = keyStatus?.source ?? "none";
+  const configured = keyStatus?.configured ?? false;
+
+  const handleSave = useCallback(async () => {
+    if (!keyValue.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.saveApiKeyByEnv(envVar, keyValue.trim());
+      setKeyValue("");
+      setShowInput(false);
+      await refetchStatus();
+      // Trigger health check after saving
+      try {
+        await api.checkExternalServiceHealth(serviceId);
+      } catch {
+        // health check failure is not fatal
+      }
+      queryClient.invalidateQueries({ queryKey: ["external-services"] });
+    } catch (e: any) {
+      setError(e?.detail || "Failed to save key");
+    } finally {
+      setSaving(false);
+    }
+  }, [keyValue, envVar, serviceId, refetchStatus, queryClient]);
+
+  const handleDelete = useCallback(async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deleteApiKeyByEnv(envVar);
+      await refetchStatus();
+      queryClient.invalidateQueries({ queryKey: ["external-services"] });
+    } catch (e: any) {
+      setError(e?.detail || "Failed to delete key");
+    } finally {
+      setDeleting(false);
+    }
+  }, [envVar, refetchStatus, queryClient]);
+
+  return (
+    <div className="col-span-2">
+      <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider mb-2">
+        API Key
+      </p>
+
+      {/* Env var label */}
+      <div className="flex items-center gap-2 mb-2">
+        <code className="text-sm text-foreground font-mono bg-background px-2 py-0.5 rounded">
+          {envVar}
+        </code>
+        {configured ? (
+          <span
+            className={cn(
+              "text-xs flex items-center gap-1",
+              source === "database" ? "text-success" : "text-blue-500"
+            )}
+          >
+            <CheckCircle className="w-3 h-3" />
+            {source === "database" ? "Stored in DB" : "From environment"}
+          </span>
+        ) : (
+          <span className="text-xs text-amber-500 flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" /> Not configured
+          </span>
+        )}
+      </div>
+
+      {/* Action buttons / input */}
+      {!showInput ? (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setShowInput(true);
+              setError(null);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-foreground-muted hover:text-foreground hover:bg-background transition-colors"
+          >
+            <Key className="w-3.5 h-3.5" />
+            {configured ? "Replace Key" : "Add Key"}
+          </button>
+          {source === "database" && (
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-error/70 hover:text-error hover:bg-error/10 transition-colors disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showKey ? "text" : "password"}
+                value={keyValue}
+                onChange={(e) => setKeyValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSave();
+                  if (e.key === "Escape") {
+                    setShowInput(false);
+                    setKeyValue("");
+                    setError(null);
+                  }
+                }}
+                placeholder="Enter API key..."
+                className="w-full px-3 py-1.5 pr-9 rounded-lg bg-background border border-border text-sm text-foreground font-mono"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground"
+              >
+                {showKey ? (
+                  <EyeOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Eye className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+            <button
+              onClick={handleSave}
+              disabled={saving || !keyValue.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-coral-500 text-white text-sm hover:bg-coral-600 disabled:opacity-50 transition-colors"
+            >
+              <Save className="w-3.5 h-3.5" />
+              {saving ? "Saving..." : "Save"}
+            </button>
+            <button
+              onClick={() => {
+                setShowInput(false);
+                setKeyValue("");
+                setError(null);
+              }}
+              className="p-1.5 rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-background transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && <p className="text-xs text-error mt-1">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
 
@@ -556,25 +736,10 @@ export default function ServicesPage() {
                     </div>
                   )}
                   {selected.api_key_env_var && (
-                    <div className="col-span-2">
-                      <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider mb-1">
-                        API Key
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <code className="text-sm text-foreground font-mono bg-background px-2 py-0.5 rounded">
-                          {selected.api_key_env_var}
-                        </code>
-                        {selected.status === "unconfigured" ? (
-                          <span className="text-xs text-amber-500 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" /> Missing
-                          </span>
-                        ) : (
-                          <span className="text-xs text-success flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3" /> Configured
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                    <ApiKeyInlineEditor
+                      envVar={selected.api_key_env_var}
+                      serviceId={selected.id}
+                    />
                   )}
                 </div>
 

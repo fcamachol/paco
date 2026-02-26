@@ -437,6 +437,32 @@ class ApiClient {
     );
   }
 
+  // Settings: by-env endpoints (used by Services page)
+  async getApiKeyStatusByEnv(envVar: string) {
+    return this.request<{
+      env_var: string;
+      configured: boolean;
+      source: "database" | "environment" | "none";
+    }>(`/api/settings/api-keys/by-env/${encodeURIComponent(envVar)}`);
+  }
+
+  async saveApiKeyByEnv(envVar: string, value: string) {
+    return this.request<{ status: string; env_var: string; source: string }>(
+      `/api/settings/api-keys/by-env/${encodeURIComponent(envVar)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ value }),
+      }
+    );
+  }
+
+  async deleteApiKeyByEnv(envVar: string) {
+    return this.request<{ status: string; env_var: string }>(
+      `/api/settings/api-keys/by-env/${encodeURIComponent(envVar)}`,
+      { method: "DELETE" }
+    );
+  }
+
   // Health check
   async healthCheck() {
     return this.request<{ status: string; app: string; version: string }>(
