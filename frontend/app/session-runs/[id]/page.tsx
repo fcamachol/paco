@@ -268,16 +268,22 @@ export default function SessionRunDetailPage() {
 
         {/* Conversation Messages */}
         <div className="space-y-3">
-          <h3 className="text-sm font-medium text-foreground-muted">
-            Conversation ({session.messages.length} messages)
-          </h3>
+          {(() => {
+            const conversationMessages = session.messages.filter(
+              (msg) => msg.role !== 'tool_use' && msg.role !== 'tool_result'
+            );
+            return (
+              <>
+                <h3 className="text-sm font-medium text-foreground-muted">
+                  Conversation ({conversationMessages.length} messages)
+                </h3>
 
-          {session.messages.length === 0 ? (
-            <div className="card p-8 text-center text-foreground-muted">
-              No messages recorded in this session.
-            </div>
-          ) : (
-            session.messages.map((msg) => (
+                {conversationMessages.length === 0 ? (
+                  <div className="card p-8 text-center text-foreground-muted">
+                    No messages recorded in this session.
+                  </div>
+                ) : (
+                  conversationMessages.map((msg) => (
               <MessageBubble
                 key={msg.id}
                 message={msg}
@@ -288,7 +294,10 @@ export default function SessionRunDetailPage() {
                 getRoleBg={getRoleBg}
               />
             ))
-          )}
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>
