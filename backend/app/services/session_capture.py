@@ -68,7 +68,7 @@ class SessionCaptureService:
                     system_prompt_hash=_hash_system_prompt(system_prompt),
                     model=model,
                     status="active",
-                    metadata=metadata or {},
+                    extra_metadata=metadata or {},
                     started_at=datetime.now(timezone.utc),
                 )
                 db.add(run)
@@ -150,7 +150,7 @@ class SessionCaptureService:
                     raw_response=raw_response,
                     thinking_content=thinking_content,
                     message_hash=message_hash,
-                    metadata=metadata or {},
+                    extra_metadata=metadata or {},
                 )
                 db.add(msg)
 
@@ -201,7 +201,7 @@ class SessionCaptureService:
                 raw_response=msg_data.get("raw_response"),
                 thinking_content=msg_data.get("thinking_content"),
                 execution_id=msg_data.get("execution_id"),
-                metadata=msg_data.get("metadata"),
+                extra_metadata=msg_data.get("metadata"),
             )
             if result:
                 count += 1
@@ -225,9 +225,9 @@ class SessionCaptureService:
                     run.status = status
                     run.ended_at = datetime.now(timezone.utc)
                     if error_message:
-                        run.metadata = {**(run.metadata or {}), "error_message": error_message}
+                        run.extra_metadata = {**(run.extra_metadata or {}), "error_message": error_message}
                     if metadata:
-                        run.metadata = {**(run.metadata or {}), **metadata}
+                        run.extra_metadata = {**(run.extra_metadata or {}), **metadata}
                     await db.commit()
             logger.debug("Session ended: %s (status=%s)", session_run_id, status)
             return True

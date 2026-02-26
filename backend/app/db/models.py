@@ -432,7 +432,7 @@ class SessionRun(Base):
 
     # Integrity
     integrity_hash: Mapped[Optional[str]] = mapped_column(String(64))
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    extra_metadata: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
 
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -494,7 +494,7 @@ class SessionMessage(Base):
 
     # Hash chain link for tamper detection
     message_hash: Mapped[Optional[str]] = mapped_column(String(64))
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict)
+    extra_metadata: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

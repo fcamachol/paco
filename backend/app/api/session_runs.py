@@ -82,7 +82,7 @@ def _msg_to_response(msg: SessionMessage) -> SessionMessageResponse:
         stop_reason=msg.stop_reason,
         thinking_content=msg.thinking_content,
         message_hash=msg.message_hash,
-        metadata=msg.metadata or {},
+        metadata=msg.extra_metadata or {},
         created_at=msg.created_at,
     )
 
@@ -279,7 +279,7 @@ async def get_session_run(session_run_id: UUID, db: DbSession):
         integrity_hash=run.integrity_hash,
         messages=[_msg_to_response(m) for m in run.messages],
         execution_ids=execution_ids,
-        metadata=run.metadata or {},
+        metadata=run.extra_metadata or {},
     )
 
 
@@ -318,7 +318,7 @@ async def get_session_message(session_run_id: UUID, message_id: UUID, db: DbSess
         stop_reason=msg.stop_reason,
         thinking_content=msg.thinking_content,
         message_hash=msg.message_hash,
-        metadata=msg.metadata or {},
+        metadata=msg.extra_metadata or {},
         created_at=msg.created_at,
         raw_request=msg.raw_request,
         raw_response=msg.raw_response,
@@ -495,7 +495,7 @@ async def export_session_run(session_run_id: UUID, db: DbSession):
             "total_cost": float(run.total_cost or 0),
             "total_duration_ms": run.total_duration_ms,
             "integrity_hash": run.integrity_hash,
-            "metadata": run.metadata,
+            "metadata": run.extra_metadata,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "ended_at": run.ended_at.isoformat() if run.ended_at else None,
             "created_at": run.created_at.isoformat() if run.created_at else None,
@@ -519,7 +519,7 @@ async def export_session_run(session_run_id: UUID, db: DbSession):
                 "raw_response": msg.raw_response,
                 "thinking_content": msg.thinking_content,
                 "message_hash": msg.message_hash,
-                "metadata": msg.metadata,
+                "metadata": msg.extra_metadata,
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
             }
             for msg in sorted(run.messages, key=lambda m: m.sequence_number)
