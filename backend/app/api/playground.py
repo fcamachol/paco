@@ -54,6 +54,7 @@ class AgentRunRequest(BaseModel):
     tools_config: List[Dict[str, Any]] = []  # Tool/MCP configs from connected nodes
     agent_id: Optional[str] = None  # DB agent ID to look up per-agent env_vars
     previous_category: Optional[str] = None  # Sticky routing: last classified skill code
+    session_run_id: Optional[str] = None  # Reuse existing session for multi-turn
 
 
 class InfraRunRequest(BaseModel):
@@ -547,16 +548,19 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
     agent_name = request.agent_config.get("name", request.agent_config.get("label", "Agent"))
     model = request.agent_config.get("model", request.agent_config.get("config", {}).get("model_client", {}).get("config", {}).get("model", "claude-sonnet-4-5-20250929"))
     tool_calls_data: List[Dict[str, Any]] = []
+    turn_steps: List[Dict[str, Any]] = []
     total_input_tokens = 0
     total_output_tokens = 0
     session_id = None  # Session capture ID
 
     # 1. Emit agent_start
-    yield format_sse(make_step(
+    step_event = make_step(
         "agent_start",
         agent_id=agent_name,
         data={"agent_name": agent_name, "model": model, "message": request.message},
-    ))
+    )
+    turn_steps.append(step_event.model_dump())
+    yield format_sse(step_event)
 
     try:
         # Build messages for Claude API call
@@ -576,17 +580,29 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
         # Resolve API key early (needed for classification)
         api_key = await _resolve_api_key(request.agent_id)
 
-        # Start session capture (fire-and-forget — never breaks SSE)
+        # Start or resume session capture (fire-and-forget — never breaks SSE)
         try:
-            session_id = await session_capture.start_session(
-                agent_id=request.agent_id,
-                source="playground",
-                title=request.message[:200] if request.message else None,
-                system_prompt=system_prompt,
-                model=model,
-            )
+            if request.session_run_id:
+                session_id = await session_capture.resume_session(uuid.UUID(request.session_run_id))
+            else:
+                session_id = None
+
+            if session_id is None:
+                session_id = await session_capture.start_session(
+                    agent_id=request.agent_id,
+                    source="playground",
+                    title=request.message[:200] if request.message else None,
+                    system_prompt=system_prompt,
+                    model=model,
+                )
+
             if session_id:
                 await session_capture.append_message(session_id, role="user", content_text=request.message)
+                yield format_sse(make_step(
+                    "session_init",
+                    agent_id=agent_name,
+                    data={"session_run_id": str(session_id)},
+                ))
         except Exception:
             pass
 
@@ -653,22 +669,26 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             }
 
             # Emit classification step
-            yield format_sse(make_step(
+            step_event = make_step(
                 "classification",
                 agent_id=agent_name,
                 data=classification_data,
                 duration_ms=classify_duration,
-            ))
+            )
+            turn_steps.append(step_event.model_dump())
+            yield format_sse(step_event)
 
             # Emit routing step
-            yield format_sse(make_step(
+            step_event = make_step(
                 "routing",
                 agent_id=selected_skill.name,
                 data={
                     "skill_code": selected_skill.code,
                     "skill_name": selected_skill.name,
                 },
-            ))
+            )
+            turn_steps.append(step_event.model_dump())
+            yield format_sse(step_event)
 
         # Inject selected skill into system prompt
         if selected_skill:
@@ -680,11 +700,13 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                 tools_payload = [t for t in tools_payload if t["name"] in allowed_set]
 
         # Emit skill loading status (visible in execution trace)
-        yield format_sse(make_step(
+        step_event = make_step(
             "skill_check",
             agent_id=agent_name,
             data=classification_data,
-        ))
+        )
+        turn_steps.append(step_event.model_dump())
+        yield format_sse(step_event)
         if not api_key:
             yield format_sse(make_step(
                 "error",
@@ -757,6 +779,7 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                             model=api_result.get("model", model),
                             stop_reason=api_result.get("stop_reason"),
                             raw_response=api_result,
+                            metadata={"steps": turn_steps},
                         )
                 except Exception:
                     pass
@@ -775,6 +798,7 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                         model=api_result.get("model", model),
                         stop_reason=api_result.get("stop_reason"),
                         raw_response=api_result,
+                        metadata={"steps": turn_steps},
                     )
             except Exception:
                 pass
@@ -783,12 +807,14 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             tool_results_for_api = []
             for tool_use in tool_uses:
                 tool_start = time.time()
-                yield format_sse(make_step(
+                step_event = make_step(
                     "tool_call",
                     agent_id=agent_name,
                     tool_name=tool_use["name"],
                     data={"input": tool_use.get("input", {}), "tool_use_id": tool_use["id"]},
-                ))
+                )
+                turn_steps.append(step_event.model_dump())
+                yield format_sse(step_event)
 
                 # Capture tool_use message
                 try:
@@ -810,13 +836,15 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                     tool_output = {"note": f"Tool '{tool_use['name']}' is not reachable via MCP in playground. Configure the MCP server URL to enable execution."}
 
                 tool_duration = (time.time() - tool_start) * 1000
-                yield format_sse(make_step(
+                step_event = make_step(
                     "tool_result",
                     agent_id=agent_name,
                     tool_name=tool_use["name"],
                     data={"output": tool_output, "tool_use_id": tool_use["id"]},
                     duration_ms=tool_duration,
-                ))
+                )
+                turn_steps.append(step_event.model_dump())
+                yield format_sse(step_event)
 
                 # Capture tool_result message
                 try:
@@ -874,7 +902,7 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
 
         # 4. Emit response
         total_duration = (time.time() - start_time) * 1000
-        yield format_sse(make_step(
+        step_event = make_step(
             "response",
             agent_id=agent_name,
             data={
@@ -885,7 +913,9 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
                 "stop_reason": api_result.get("stop_reason", "") if api_result else "",
             },
             duration_ms=total_duration,
-        ))
+        )
+        turn_steps.append(step_event.model_dump())
+        yield format_sse(step_event)
 
         # Persist playground execution
         await _persist_execution(
@@ -901,12 +931,7 @@ async def agent_event_generator(request: AgentRunRequest) -> AsyncGenerator[str,
             tool_calls_data=tool_calls_data or None,
         )
 
-        # End session capture (fire-and-forget)
-        try:
-            if session_id:
-                await session_capture.end_session(session_id, status="completed")
-        except Exception:
-            pass
+        # Session stays active for multi-turn — ended explicitly via /session/end
 
     except Exception as e:
         yield format_sse(make_step(
@@ -953,6 +978,20 @@ async def run_agent(request: AgentRunRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class EndSessionRequest(BaseModel):
+    session_run_id: str
+
+
+@router.post("/session/end")
+async def end_playground_session(request: EndSessionRequest):
+    """End a playground session (called when user clears conversation)."""
+    try:
+        await session_capture.end_session(uuid.UUID(request.session_run_id), status="completed")
+    except Exception:
+        pass
+    return {"status": "ok"}
 
 
 # =============================================================================

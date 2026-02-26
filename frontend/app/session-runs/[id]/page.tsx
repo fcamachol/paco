@@ -20,6 +20,8 @@ import {
   Copy,
 } from "lucide-react";
 import { Header } from "@/components/ui/Header";
+import { StepTimeline } from "@/components/playground/StepTimeline";
+import { StepEvent } from "@/components/playground/usePlayground";
 import { api, SessionMessage } from "@/lib/api";
 import {
   cn,
@@ -407,6 +409,13 @@ function MessageBubble({
           <p className="text-sm text-foreground-muted italic">
             (no content)
           </p>
+        )}
+
+        {/* Execution steps for assistant messages */}
+        {message.role === 'assistant' && message.metadata?.steps?.length > 0 && (
+          <div className="px-0 pb-2">
+            <StepTimeline steps={message.metadata.steps as StepEvent[]} collapsed={true} />
+          </div>
         )}
 
         {/* Expanded details */}

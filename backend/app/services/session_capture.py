@@ -79,6 +79,24 @@ class SessionCaptureService:
             logger.warning("Failed to start session: %s", e)
             return None
 
+    async def resume_session(self, session_run_id: UUID) -> Optional[UUID]:
+        """Resume an existing active session. Returns session ID if valid, None otherwise."""
+        try:
+            async with async_session_maker() as db:
+                run = await db.get(SessionRun, session_run_id)
+                if run is None:
+                    return None
+                if run.status in ("error", "cancelled"):
+                    return None
+                if run.status == "completed":
+                    run.status = "active"
+                    run.ended_at = None
+                    await db.commit()
+                return session_run_id
+        except Exception as e:
+            logger.warning("Failed to resume session %s: %s", session_run_id, e)
+            return None
+
     async def append_message(
         self,
         session_run_id: Optional[UUID],

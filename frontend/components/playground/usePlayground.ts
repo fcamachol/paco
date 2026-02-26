@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef } from 'react';
 
 export interface StepEvent {
-  step: 'classification' | 'routing' | 'agent_start' | 'skill_check' | 'tool_call' | 'tool_result' | 'response' | 'error' | 'decomposition' | 'task_assigned' | 'aggregation';
+  step: 'classification' | 'routing' | 'agent_start' | 'skill_check' | 'tool_call' | 'tool_result' | 'response' | 'error' | 'decomposition' | 'task_assigned' | 'aggregation' | 'session_init';
   agent_id?: string;
   tool_name?: string;
   data: Record<string, any>;
@@ -27,6 +27,7 @@ export function usePlayground() {
   const [isRunning, setIsRunning] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [previousCategory, setPreviousCategory] = useState<string | null>(null);
+  const [sessionRunId, setSessionRunId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const parseSSEStream = async (
@@ -100,6 +101,7 @@ export function usePlayground() {
           conversation_history: conversationHistory,
           agent_id: agentId,
           previous_category: previousCategory,
+          session_run_id: sessionRunId,
         }),
         signal: controller.signal,
       });
@@ -128,6 +130,11 @@ export function usePlayground() {
       await parseSSEStream(response, (event) => {
         runSteps.push(event);
         setSteps([...runSteps]);
+
+        // Track session ID for multi-turn continuity
+        if (event.step === 'session_init' && event.data.session_run_id) {
+          setSessionRunId(event.data.session_run_id);
+        }
 
         // Track classified category for sticky routing
         if (event.step === 'classification' && event.data.category) {
@@ -182,7 +189,7 @@ export function usePlayground() {
     }
 
     setIsRunning(false);
-  }, [messages, previousCategory]);
+  }, [messages, previousCategory, sessionRunId]);
 
   const runInfra = useCallback(async (
     message: string,
@@ -279,10 +286,18 @@ export function usePlayground() {
   }, [messages]);
 
   const clearConversation = useCallback(() => {
+    if (sessionRunId) {
+      fetch(`${API_URL}/api/playground/session/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_run_id: sessionRunId }),
+      }).catch(() => {});
+    }
     setMessages([]);
     setSteps([]);
     setPreviousCategory(null);
-  }, []);
+    setSessionRunId(null);
+  }, [sessionRunId]);
 
   const stopRun = useCallback(() => {
     abortRef.current?.abort();
