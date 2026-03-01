@@ -87,31 +87,43 @@ async def _sync_tools_on_startup():
     from app.db.models import McpServer, Tool
 
     try:
-        # First, fetch server info from DB
+        # Fetch server info from DB
         async with async_session_maker() as db:
             result = await db.execute(
                 select(McpServer).where(McpServer.transport == "http")
             )
-            servers = [(s.id, s.name, s.url) for s in result.scalars().all()]
+            servers = []
+            for s in result.scalars().all():
+                servers.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "url": s.url,
+                    "proxy_config": s.proxy_config,
+                    "proxy_url": s.proxy_url,
+                })
 
         if not servers:
             print("No HTTP MCP servers registered — skipping tool sync")
             return
 
-        # Then, fetch tools from each server (outside DB session to avoid greenlet issues)
-        for server_id, server_name, server_url in servers:
+        for server in servers:
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"{server_url}/tools")
+                transport = None
+                proxy_config = server.get("proxy_config")
+                if proxy_config and proxy_config.get("enabled") and proxy_config.get("url"):
+                    transport = httpx.AsyncHTTPTransport(proxy=proxy_config["url"])
+                elif server.get("proxy_url"):
+                    transport = httpx.AsyncHTTPTransport(proxy=server["proxy_url"])
+
+                async with httpx.AsyncClient(timeout=5.0, transport=transport) as client:
+                    resp = await client.post(f"{server['url']}/tools/list", json={})
                     if resp.status_code != 200:
-                        print(f"  Tool sync: {server_name} returned {resp.status_code}")
+                        print(f"  Tool sync: {server['name']} returned {resp.status_code}")
                         continue
-                    tools_data = resp.json()
+                    data = resp.json()
 
-                if isinstance(tools_data, dict):
-                    tools_data = tools_data.get("tools", [])
+                tools_data = data.get("tools", [])
 
-                # Insert into DB in a separate session
                 async with async_session_maker() as db:
                     synced = 0
                     for tool_data in tools_data:
@@ -122,7 +134,7 @@ async def _sync_tools_on_startup():
                         existing = await db.execute(
                             select(Tool).where(
                                 Tool.name == tool_name,
-                                Tool.mcp_server_id == server_id,
+                                Tool.mcp_server_id == server["id"],
                             )
                         )
                         if existing.scalar_one_or_none():
@@ -131,7 +143,7 @@ async def _sync_tools_on_startup():
                         tool = Tool(
                             name=tool_name,
                             description=tool_data.get("description"),
-                            mcp_server_id=server_id,
+                            mcp_server_id=server["id"],
                             input_schema=tool_data.get("inputSchema", tool_data.get("input_schema", {})),
                         )
                         db.add(tool)
@@ -139,9 +151,9 @@ async def _sync_tools_on_startup():
 
                     if synced:
                         await db.commit()
-                        print(f"  Synced {synced} tools from {server_name}")
+                        print(f"  Synced {synced} tools from {server['name']}")
             except Exception as e:
-                print(f"  Tool sync failed for {server_name}: {e}")
+                print(f"  Tool sync failed for {server['name']}: {e}")
 
     except Exception as e:
         print(f"Tool sync error: {e}")

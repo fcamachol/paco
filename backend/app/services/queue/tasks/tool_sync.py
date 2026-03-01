@@ -26,28 +26,49 @@ logger = logging.getLogger("paco.queue.tasks")
 TASK_TYPE = "tool_sync"
 
 
+def _build_transport(server: dict) -> httpx.AsyncHTTPTransport | None:
+    """Build httpx transport with proxy if configured."""
+    proxy_config = server.get("proxy_config")
+    if proxy_config and proxy_config.get("enabled") and proxy_config.get("url"):
+        return httpx.AsyncHTTPTransport(proxy=proxy_config["url"])
+    proxy_url = server.get("proxy_url")
+    if proxy_url:
+        return httpx.AsyncHTTPTransport(proxy=proxy_url)
+    return None
+
+
 async def handle(payload: Dict[str, Any], redis: Redis) -> None:
-    # Fetch server info
+    # Fetch full server objects (need proxy_config for transport)
     async with async_session_maker() as db:
         result = await db.execute(
             select(McpServer).where(McpServer.transport == "http")
         )
-        servers = [(s.id, s.name, s.url) for s in result.scalars().all()]
+        servers = result.scalars().all()
+        # Detach from session so we can use them outside
+        server_list = []
+        for s in servers:
+            server_list.append({
+                "id": s.id,
+                "name": s.name,
+                "url": s.url,
+                "proxy_config": s.proxy_config,
+                "proxy_url": s.proxy_url,
+            })
 
-    if not servers:
+    if not server_list:
         logger.debug("No HTTP MCP servers registered — skipping tool sync")
     else:
-        for server_id, server_name, server_url in servers:
+        for server in server_list:
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(f"{server_url}/tools")
+                transport = _build_transport(server)
+                async with httpx.AsyncClient(timeout=10.0, transport=transport) as client:
+                    resp = await client.post(f"{server['url']}/tools/list", json={})
                     if resp.status_code != 200:
-                        logger.warning("Tool sync: %s returned %d", server_name, resp.status_code)
+                        logger.warning("Tool sync: %s returned %d", server["name"], resp.status_code)
                         continue
-                    tools_data = resp.json()
+                    data = resp.json()
 
-                if isinstance(tools_data, dict):
-                    tools_data = tools_data.get("tools", [])
+                tools_data = data.get("tools", [])
 
                 async with async_session_maker() as db:
                     synced = 0
@@ -58,7 +79,7 @@ async def handle(payload: Dict[str, Any], redis: Redis) -> None:
                         existing = await db.execute(
                             select(Tool).where(
                                 Tool.name == tool_name,
-                                Tool.mcp_server_id == server_id,
+                                Tool.mcp_server_id == server["id"],
                             )
                         )
                         if existing.scalar_one_or_none():
@@ -66,15 +87,15 @@ async def handle(payload: Dict[str, Any], redis: Redis) -> None:
                         db.add(Tool(
                             name=tool_name,
                             description=tool_data.get("description"),
-                            mcp_server_id=server_id,
+                            mcp_server_id=server["id"],
                             input_schema=tool_data.get("inputSchema", tool_data.get("input_schema", {})),
                         ))
                         synced += 1
                     if synced:
                         await db.commit()
-                        logger.info("Synced %d tools from %s", synced, server_name)
+                        logger.info("Synced %d tools from %s", synced, server["name"])
             except Exception as e:
-                logger.warning("Tool sync failed for %s: %s", server_name, e)
+                logger.warning("Tool sync failed for %s: %s", server["name"], e)
 
     # Self-reschedule
     interval = payload.get("interval") or getattr(settings, "tool_sync_interval", 300)
