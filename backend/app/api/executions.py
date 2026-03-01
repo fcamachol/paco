@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.core.deps import DbSession
 from app.db.models import Agent, Execution, ToolCall
@@ -367,7 +367,7 @@ async def get_realtime_metrics(
             func.sum(Execution.total_cost).label("cost"),
             func.avg(Execution.duration_ms).label("avg_duration"),
             func.sum(
-                func.case((Execution.status == "error", 1), else_=0)
+                case((Execution.status == "error", 1), else_=0)
             ).label("errors"),
         ).where(Execution.started_at >= start_time)
     )
@@ -379,7 +379,7 @@ async def get_realtime_metrics(
             func.count(ToolCall.id).label("count"),
             func.avg(ToolCall.latency_ms).label("avg_latency"),
             func.sum(
-                func.case((ToolCall.success == False, 1), else_=0)
+                case((ToolCall.success == False, 1), else_=0)
             ).label("failures"),
         ).where(ToolCall.called_at >= start_time)
     )
