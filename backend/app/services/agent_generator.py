@@ -119,20 +119,15 @@ class AgentGenerator:
                 "code": skill.code,
                 "name": skill.name,
                 "description": skill.description or "",
-                "prompt": (skill.base_prompt or "") + (
-                    "\n\n" + agent_skill.prompt_override if agent_skill.prompt_override else ""
-                ),
-                "tool_names": skill.required_tool_names or [],
-                "subcategories": _merge_subcategories(
-                    skill.subcategories, agent_skill.subcategory_overrides
-                ),
-                "priority": agent_skill.priority_override or skill.default_priority,
-                "keywords": (skill.keywords or []) + (agent_skill.keyword_overrides or []),
-                # Anthropic Agent Skills spec
-                "resource_files": skill.resource_files or {},
-                "license": skill.license,
-                "compatibility": skill.compatibility,
-                "skill_metadata": skill.skill_metadata or {},
+                "prompt": skill.body or "",
+                "tool_names": skill.allowed_tools or [],
+                "subcategories": [],
+                "priority": "medium",
+                "keywords": skill.keywords or [],
+                "resource_files": {},
+                "license": None,
+                "compatibility": None,
+                "skill_metadata": {},
                 "allowed_tools": skill.allowed_tools or [],
             })
 
