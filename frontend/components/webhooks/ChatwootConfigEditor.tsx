@@ -198,7 +198,7 @@ export function ChatwootConfigEditor({
               className="w-4 h-4 rounded border-border accent-coral-500"
             />
             <span className="text-foreground">
-              Only process open conversations
+              Skip open conversations (human-handled)
             </span>
           </label>
 
