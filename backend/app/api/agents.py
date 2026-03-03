@@ -73,6 +73,9 @@ class AgentDetailResponse(AgentResponse):
     sdk_config: Dict[str, Any] = {}
     env_vars: Dict[str, Any] = {}
     lightning_config: Dict[str, Any] = {}
+    webhook_config: Dict[str, Any] = {}
+    conversation_rules: Optional[str] = None
+    classifier_config: Dict[str, Any] = {}
     project_path: Optional[str] = None
     allowed_tools: List[str] = []
     skills: List[AgentSkillInfo] = []
@@ -97,6 +100,9 @@ class AgentCreateRequest(BaseModel):
     env_vars: Dict[str, Any] = {}
     sdk_config: Optional[Dict[str, Any]] = None
     lightning_config: Optional[Dict[str, Any]] = None
+    webhook_config: Optional[Dict[str, Any]] = None
+    conversation_rules: Optional[str] = None
+    classifier_config: Optional[Dict[str, Any]] = None
 
 
 class AgentUpdateRequest(BaseModel):
@@ -111,6 +117,9 @@ class AgentUpdateRequest(BaseModel):
     sdk_config: Optional[Dict[str, Any]] = None
     env_vars: Optional[Dict[str, Any]] = None
     lightning_config: Optional[Dict[str, Any]] = None
+    webhook_config: Optional[Dict[str, Any]] = None
+    conversation_rules: Optional[str] = None
+    classifier_config: Optional[Dict[str, Any]] = None
 
 
 class AgentStatusResponse(BaseModel):
