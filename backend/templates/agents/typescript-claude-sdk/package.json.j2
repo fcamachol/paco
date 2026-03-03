@@ -13,7 +13,8 @@
     "better-sqlite3": "^11.0.0",
     "express": "^4.21.0",
     "prom-client": "^15.1.0",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0"{% if webhooks.get("chatwoot") and webhooks.chatwoot.get("media_processing") and webhooks.chatwoot.media_processing.get("video_analysis", true) %},
+    "@google/generative-ai": "^0.24.1"{% endif %}
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

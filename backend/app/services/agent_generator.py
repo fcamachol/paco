@@ -216,6 +216,13 @@ class AgentGenerator:
             ("src/utils/tracing.ts.j2", "src/utils/tracing.ts"),
         ]
 
+        # Chatwoot integration (conditionally included)
+        webhooks = context.get("webhooks", {})
+        if webhooks.get("chatwoot"):
+            files.append(("src/chatwoot.ts.j2", "src/chatwoot.ts"))
+            if webhooks["chatwoot"].get("media_processing"):
+                files.append(("src/media.ts.j2", "src/media.ts"))
+
         # Add one file per skill
         for skill in context.get("skills", []):
             code = skill["code"]
@@ -243,6 +250,13 @@ class AgentGenerator:
             ("tracing/__init__.py.j2", "tracing/__init__.py"),
             ("tracing/setup.py.j2", "tracing/setup.py"),
         ]
+
+        # Chatwoot integration (conditionally included)
+        webhooks = context.get("webhooks", {})
+        if webhooks.get("chatwoot"):
+            files.append(("chatwoot.py.j2", "chatwoot.py"))
+            if webhooks["chatwoot"].get("media_processing"):
+                files.append(("media.py.j2", "media.py"))
 
         # Generate SKILL.md and resource files per skill
         for skill in context.get("skills", []):

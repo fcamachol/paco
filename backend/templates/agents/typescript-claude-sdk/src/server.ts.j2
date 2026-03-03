@@ -8,7 +8,18 @@ import { config } from './config/index.js';
 import { configManager } from './config/config-manager.js';
 import { processMessage } from './agent.js';
 import { registry, messagesTotal, errorRate } from './utils/metrics.js';
-import type { ChatRequest{% if webhooks.get("chatwoot") %}, ChatwootWebhookPayload{% endif %} } from './types.js';
+import type { ChatRequest } from './types.js';
+{% if webhooks.get("chatwoot") %}
+import type { ChatwootWebhookPayload } from './types.js';
+import {
+  sendToChatwoot,
+  shouldProcessWebhook,
+  extractMessageContent,
+  processAttachments,
+  buildChatwootContext,
+  getChatwootStatus,
+} from './chatwoot.js';
+{% endif %}
 
 const app = express();
 app.use(express.json());
@@ -89,63 +100,79 @@ app.post('/api/chat', async (req, res) => {
 // =============================================================================
 
 app.post('/chatwoot', async (req, res) => {
+  const payload = req.body as ChatwootWebhookPayload;
+
+  // Return 200 immediately to avoid Chatwoot timeout
+  res.status(200).json({ received: true });
+
+  // Validate webhook
+  const validation = shouldProcessWebhook(payload);
+  if (!validation.shouldProcess) {
+    console.log(`[Chatwoot] Skipping: ${validation.reason}`);
+    return;
+  }
+
+  console.log(`[Chatwoot] Message from ${payload.sender?.name} in conversation ${payload.conversation?.id}`);
+
   try {
-    const payload = req.body as ChatwootWebhookPayload;
+    const context = buildChatwootContext(payload);
+    const { text, attachments, hasMedia } = extractMessageContent(payload);
 
-    // Only process incoming messages
-    if (payload.message_type !== 'incoming' && payload.event !== 'message_created') {
-      res.json({ status: 'ignored' });
+    let messageText = text;
+    if (hasMedia) {
+      const attachmentText = await processAttachments(attachments);
+      messageText = messageText
+        ? `${messageText}\n\n${attachmentText}`
+        : attachmentText;
+    }
+
+    if (!messageText.trim()) {
+      console.log('[Chatwoot] Empty message, skipping');
       return;
     }
 
-    // Ignore messages from the bot itself
-    if (payload.sender?.type === 'agent') {
-      res.json({ status: 'ignored' });
-      return;
-    }
-
-    const message = payload.content;
-    const conversationId = String(payload.conversation?.id || payload.id);
-    const contactId = payload.conversation?.contact_id
-      ? String(payload.conversation.contact_id)
-      : undefined;
-
-    if (!message) {
-      res.json({ status: 'no_content' });
-      return;
-    }
-
-    // Process through agent
     const result = await processMessage({
-      message,
-      conversationId,
-      contactId,
+      message: messageText,
+      conversationId: context.conversationId,
+      contactId: String(context.chatwootContactId),
+      metadata: {
+        name: context.senderName,
+        phone: context.senderPhone,
+        email: context.senderEmail,
+        chatwootAccountId: context.accountId,
+        chatwootConversationId: context.chatwootConversationId,
+        customAttributes: context.customAttributes,
+      },
     });
 
-    // Send response back to Chatwoot
-    if (config.chatwootUrl && config.chatwootToken) {
-      await fetch(
-        `${config.chatwootUrl}/api/v1/accounts/1/conversations/${conversationId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'api_access_token': config.chatwootToken,
-          },
-          body: JSON.stringify({
-            content: result.response,
-            message_type: 'outgoing',
-            content_type: 'text',
-          }),
-        },
-      );
-    }
+    const responseText = result.response;
+    const messages = responseText.split(/\n{3,}/).filter((m: string) => m.trim());
 
-    res.json({ status: 'ok', skillUsed: result.skillUsed });
+    for (let i = 0; i < messages.length; i++) {
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, {{ webhooks.chatwoot.get("multi_message_delay_ms", 1500) }}));
+      }
+      const sendResult = await sendToChatwoot(
+        context.accountId,
+        context.chatwootConversationId,
+        messages[i].trim(),
+      );
+      if (!sendResult.success) {
+        console.error(`[Chatwoot] Failed to send message ${i + 1}: ${sendResult.error}`);
+      }
+    }
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error('[Chatwoot] Webhook error:', errMsg);
-    res.status(500).json({ error: 'Webhook processing failed' });
+    console.error('[Chatwoot] Processing error:', error);
+    try {
+      const context = buildChatwootContext(payload);
+      await sendToChatwoot(
+        context.accountId,
+        context.chatwootConversationId,
+        'Sorry, I had a problem processing your message. Please try again in a moment.',
+      );
+    } catch (sendError) {
+      console.error('[Chatwoot] Failed to send error message:', sendError);
+    }
   }
 });
 {% endif %}

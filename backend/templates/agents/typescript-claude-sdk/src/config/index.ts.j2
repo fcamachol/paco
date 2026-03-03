@@ -49,8 +49,12 @@ export const config = {
 
   // Webhooks
 {% if webhooks.get("chatwoot") %}
+  // Chatwoot
   chatwootUrl: process.env.CHATWOOT_URL || '{{ webhooks.chatwoot.get("url", "") }}',
   chatwootToken: process.env.CHATWOOT_TOKEN || '',
+  chatwootAccountId: parseInt(process.env.CHATWOOT_ACCOUNT_ID || '{{ webhooks.chatwoot.get("account_id", 1) }}'),
+  chatwootFilterOpenConversations: {{ 'true' if webhooks.chatwoot.get("filter_open_conversations", true) else 'false' }},
+  chatwootMultiMessageDelayMs: parseInt(process.env.CHATWOOT_MULTI_MESSAGE_DELAY_MS || '{{ webhooks.chatwoot.get("multi_message_delay_ms", 1500) }}'),
 {% endif %}
 
   // Security

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # Chatwoot
     chatwoot_url: str = "{{ webhooks.chatwoot.get('url', '') }}"
     chatwoot_token: str = ""
+    chatwoot_account_id: int = {{ webhooks.chatwoot.get("account_id", 1) }}
 {% endif %}
 
     class Config:
