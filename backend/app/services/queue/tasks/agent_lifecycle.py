@@ -32,6 +32,15 @@ async def handle(payload: Dict[str, Any], redis: Redis) -> None:
     agent_id = payload.get("agent_id")
     env = payload.get("env")
 
+    # Fall back to agent name if pm2_name was not set
+    if not pm2_name and agent_id:
+        async with async_session_maker() as db:
+            from uuid import UUID
+            result = await db.execute(select(Agent).where(Agent.id == UUID(agent_id)))
+            agent = result.scalar_one_or_none()
+            if agent:
+                pm2_name = agent.pm2_name or agent.name
+
     if not action or not pm2_name:
         logger.warning("agent_lifecycle: missing action or pm2_name")
         return

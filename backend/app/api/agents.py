@@ -429,9 +429,9 @@ async def delete_agent(
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent {agent_id} not found")
 
-    if agent.status == "running" and agent.pm2_name:
+    if agent.status == "running":
         pm2 = PM2Client()
-        await pm2.stop(agent.pm2_name)
+        await pm2.stop(agent.pm2_name or agent.name)
 
     await db.delete(agent)
     await db.commit()
@@ -453,7 +453,7 @@ async def start_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSt
 
     # Capture values before commit (commit expires attributes in production)
     agent_id_str = str(agent.id)
-    pm2_name = agent.pm2_name
+    pm2_name = agent.pm2_name or agent.name
     env = dict(agent.env_vars or {})
     env["PACO_API_URL"] = settings.internal_api_url
     env["PACO_AGENT_ID"] = agent_id_str
@@ -489,7 +489,7 @@ async def stop_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> AgentSta
 
     # Capture values before commit (commit expires attributes in production)
     agent_id_str = str(agent.id)
-    pm2_name = agent.pm2_name
+    pm2_name = agent.pm2_name or agent.name
 
     agent.status = "stopping"
     await db.commit()
@@ -519,7 +519,7 @@ async def restart_agent(agent_id: UUID, db: DbSession, _: OperatorUser) -> Agent
 
     # Capture values before commit (commit expires attributes in production)
     agent_id_str = str(agent.id)
-    pm2_name = agent.pm2_name
+    pm2_name = agent.pm2_name or agent.name
     env = dict(agent.env_vars or {})
     env["PACO_API_URL"] = settings.internal_api_url
     env["PACO_AGENT_ID"] = agent_id_str
@@ -590,12 +590,12 @@ async def apply_agent_config(
             )
 
     # Step 3: Restart via PM2 if running
-    if agent.status == "running" and agent.pm2_name:
+    if agent.status == "running":
         pm2 = PM2Client()
         env = dict(agent.env_vars or {})
         env["PACO_API_URL"] = settings.internal_api_url
         env["PACO_AGENT_ID"] = str(agent.id)
-        await pm2.restart(agent.pm2_name)
+        await pm2.restart(agent.pm2_name or agent.name)
 
     return ApplyResponse(
         success=True,
@@ -612,7 +612,7 @@ async def get_agent_status(agent_id: UUID, db: DbSession) -> AgentStatusResponse
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
 
     pm2 = PM2Client()
-    pm2_status = await pm2.status(agent.pm2_name) if agent.pm2_name else None
+    pm2_status = await pm2.status(agent.pm2_name or agent.name)
 
     if pm2_status:
         pm2_state = pm2_status.get("pm2_env", {}).get("status", "").lower()
