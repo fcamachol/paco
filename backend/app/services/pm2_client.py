@@ -16,6 +16,7 @@ class PM2Client:
         self, *args: str,
         env_override: Optional[Dict[str, str]] = None,
         timeout: float = 30.0,
+        cwd: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run a PM2 command and return JSON output."""
         cmd = ["pm2", "jlist", *args] if "jlist" in args else ["pm2", *args]
@@ -32,6 +33,7 @@ class PM2Client:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=subprocess_env,
+                cwd=cwd,
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
@@ -79,6 +81,7 @@ class PM2Client:
 
     async def start(
         self, name: str, env: Optional[Dict[str, str]] = None,
+        project_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Start a process by name, optionally injecting environment variables."""
         # First check if it exists
@@ -88,8 +91,22 @@ class PM2Client:
             # Process exists, restart it
             result = await self._run_pm2_command("restart", name, env_override=env)
         else:
-            # Try to start from ecosystem config
-            result = await self._run_pm2_command("start", name, env_override=env)
+            # Start from ecosystem config in the project directory
+            from pathlib import Path
+            eco_file = "ecosystem.config.cjs"
+            if project_path:
+                eco_path = Path(project_path) / eco_file
+                if eco_path.exists():
+                    result = await self._run_pm2_command(
+                        "start", eco_file, env_override=env, cwd=project_path,
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Ecosystem config not found at {eco_path}. "
+                        f"Run 'Apply' to generate the agent code first."
+                    )
+            else:
+                result = await self._run_pm2_command("start", name, env_override=env)
 
         if "error" in result:
             raise RuntimeError(result["error"])

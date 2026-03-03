@@ -8,6 +8,7 @@ Payload:
   - action: "start" | "stop" | "restart"
   - pm2_name: str
   - agent_id: str
+  - project_path: str (optional, for start — directory with ecosystem.config.cjs)
   - env: dict (optional, for start/restart)
 """
 
@@ -30,16 +31,18 @@ async def handle(payload: Dict[str, Any], redis: Redis) -> None:
     action = payload.get("action")
     pm2_name = payload.get("pm2_name")
     agent_id = payload.get("agent_id")
+    project_path = payload.get("project_path")
     env = payload.get("env")
 
-    # Fall back to agent name if pm2_name was not set
-    if not pm2_name and agent_id:
+    # Fall back to agent record if pm2_name or project_path missing
+    if agent_id and (not pm2_name or not project_path):
         async with async_session_maker() as db:
             from uuid import UUID
             result = await db.execute(select(Agent).where(Agent.id == UUID(agent_id)))
             agent = result.scalar_one_or_none()
             if agent:
-                pm2_name = agent.pm2_name or agent.name
+                pm2_name = pm2_name or agent.pm2_name or agent.name
+                project_path = project_path or agent.project_path
 
     if not action or not pm2_name:
         logger.warning("agent_lifecycle: missing action or pm2_name")
@@ -50,7 +53,7 @@ async def handle(payload: Dict[str, Any], redis: Redis) -> None:
 
     try:
         if action == "start":
-            await pm2.start(pm2_name, env=env)
+            await pm2.start(pm2_name, env=env, project_path=project_path)
         elif action == "stop":
             await pm2.stop(pm2_name)
         elif action == "restart":
