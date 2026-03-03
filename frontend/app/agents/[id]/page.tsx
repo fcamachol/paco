@@ -25,7 +25,7 @@ import { cn, getStatusColor, formatRelativeTime } from "@/lib/utils";
 import { useIsOperator } from "@/lib/auth";
 import { AgentConfigForm } from "@/components/agent-config";
 import type { AgentFormValues } from "@/components/agent-config";
-import { InboundWebhookList, OutboundWebhookList } from "@/components/webhooks";
+import { InboundWebhookList, OutboundWebhookList, ChatwootConfigEditor } from "@/components/webhooks";
 
 type TabId = "config" | "tools" | "skills" | "webhooks";
 
@@ -218,6 +218,17 @@ export default function AgentDetailPage() {
       showSuccess("Skill toggled — config pushed to agent");
     },
     onError: (err: ApiError) => setError(err.detail || "Failed to toggle skill"),
+  });
+
+  // Chatwoot config mutation
+  const chatwootMutation = useMutation({
+    mutationFn: (webhookConfig: Record<string, any>) =>
+      api.updateAgent(id, { webhook_config: webhookConfig }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agent", id] });
+      showSuccess("Chatwoot config saved");
+    },
+    onError: (err: ApiError) => setError(err.detail || "Failed to save Chatwoot config"),
   });
 
   // Apply & Restart mutation
@@ -739,6 +750,15 @@ export default function AgentDetailPage() {
         {/* Webhooks Tab */}
         {activeTab === "webhooks" && (
           <div className="space-y-8">
+            {isOperator && (
+              <div className="card p-6">
+                <ChatwootConfigEditor
+                  webhookConfig={agent.webhook_config || {}}
+                  onSave={(cfg) => chatwootMutation.mutate(cfg)}
+                  saving={chatwootMutation.isPending}
+                />
+              </div>
+            )}
             <div className="card p-6">
               <InboundWebhookList agentId={id} />
             </div>

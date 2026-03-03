@@ -6,3 +6,4 @@ export { OutboundWebhookList } from "./OutboundWebhookList";
 export { OutboundWebhookForm } from "./OutboundWebhookForm";
 export { OutboundDeliveryLog } from "./OutboundDeliveryLog";
 export { EventTypeSelector } from "./EventTypeSelector";
+export { ChatwootConfigEditor } from "./ChatwootConfigEditor";

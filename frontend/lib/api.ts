@@ -1549,6 +1549,9 @@ export interface Agent {
   max_thinking_tokens: number | null;
   sdk_config: Record<string, any>;
   env_vars: Record<string, string>;
+  webhook_config: Record<string, any>;
+  conversation_rules: string | null;
+  classifier_config: Record<string, any>;
   type?: string;
   version?: string;
   created_at: string;
@@ -1646,6 +1649,9 @@ export interface UpdateAgentRequest {
   env_vars?: Record<string, string>;
   config_yaml?: string;
   sdk_config?: Record<string, any>;
+  webhook_config?: Record<string, any>;
+  conversation_rules?: string | null;
+  classifier_config?: Record<string, any>;
 }
 
 export interface ProxyConfig {
